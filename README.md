@@ -291,12 +291,6 @@ DcReject                          = 0x8D6690
 
 ---
 
-## 📦 Source Code
-
-Available on request — Contact for repository access
-
----
-
 ## 👥 Credits
 
 **Original Source Code & Offsets** — Cypher · Oracle  
