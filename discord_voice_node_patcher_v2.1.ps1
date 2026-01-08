@@ -1054,7 +1054,7 @@ try {
     Write-Host ""
     
     Read-Host "Press Enter to exit"
-    exit ($success ? 0 : 1)
+    if ($success) { exit 0 } else { exit 1 }
     
 } catch {
     Write-Host ""
