@@ -1,22 +1,31 @@
-#Requires -RunAsAdministrator
-
 <#
 .SYNOPSIS
-    Discord Voice Quality Patcher - Enhanced Audio Settings
+    Discord Voice Quality Patcher - Enhanced Audio Settings v2.3
 .DESCRIPTION
-    Patches Discord's voice node to enable high-quality audio streaming with configurable gain
+    Patches Discord's voice node to enable high-quality audio streaming with configurable gain.
+    Automatically requests Administrator privileges if needed.
 .PARAMETER AudioGainMultiplier
     Audio gain multiplier (1-10). Default is 1 (unity gain, no amplification)
 .PARAMETER SkipBackup
     Skip creating a backup of the original file
 .PARAMETER NoGUI
     Skip GUI and use command-line parameters
+.PARAMETER Restore
+    Restore from most recent backup
+.PARAMETER ListBackups
+    List all available backups
 .EXAMPLE
     .\DiscordVoicePatcher.ps1
-    Launches GUI for configuration
+    Launches GUI for configuration (auto-elevates if needed)
 .EXAMPLE
     .\DiscordVoicePatcher.ps1 -NoGUI -AudioGainMultiplier 3
     Patches with 3x gain without showing GUI
+.EXAMPLE
+    .\DiscordVoicePatcher.ps1 -Restore
+    Restores from most recent backup
+.NOTES
+    This script will automatically request Administrator privileges if not already running as admin.
+    Just double-click to run - elevation is automatic!
 #>
 
 [CmdletBinding()]
@@ -25,111 +34,344 @@ param(
     [int]$AudioGainMultiplier = 1,
     
     [switch]$SkipBackup,
-    [switch]$NoGUI
+    [switch]$NoGUI,
+    [switch]$Restore,
+    [switch]$ListBackups
 )
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+#region Auto-Elevation
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+$isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Host "Requesting administrator privileges..." -ForegroundColor Yellow
+    
+    try {
+        $arguments = @(
+            "-NoProfile"
+            "-ExecutionPolicy Bypass"
+            "-File `"$PSCommandPath`""
+        )
+        
+        if ($PSBoundParameters.ContainsKey('AudioGainMultiplier')) {
+            $arguments += "-AudioGainMultiplier $AudioGainMultiplier"
+        }
+        if ($SkipBackup) {
+            $arguments += "-SkipBackup"
+        }
+        if ($NoGUI) {
+            $arguments += "-NoGUI"
+        }
+        if ($Restore) {
+            $arguments += "-Restore"
+        }
+        if ($ListBackups) {
+            $arguments += "-ListBackups"
+        }
+        
+        $process = Start-Process -FilePath "powershell.exe" `
+                                 -ArgumentList ($arguments -join ' ') `
+                                 -Verb RunAs `
+                                 -PassThru
+        
+        exit
+        
+    } catch {
+        Write-Host "ERROR: Failed to elevate to administrator" -ForegroundColor Red
+        Write-Host "Please run PowerShell as Administrator manually" -ForegroundColor Yellow
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+}
+#endregion
+
 #region Configuration
 $Script:Config = @{
-    # Audio Settings
     SampleRate          = 48000
     Bitrate             = 382
     Channels            = "Stereo"
-    AudioGainMultiplier = $AudioGainMultiplier  # User-facing multiplier (1-10)
+    AudioGainMultiplier = $AudioGainMultiplier
     SkipBackup          = $SkipBackup.IsPresent
+    DiscordVersion      = 9219
+    TempDir             = "$env:TEMP\DiscordVoicePatcher"
+    BackupDir           = "$env:TEMP\DiscordVoicePatcher\Backups"
+    LogFile             = "$env:TEMP\DiscordVoicePatcher\patcher.log"
+    ConfigFile          = "$env:TEMP\DiscordVoicePatcher\config.json"
+    ProcessName         = "Discord.exe"
+    ModuleName          = "discord_voice.node"
     
-    # Patch Version
-    DiscordVersion = 9219
+    ExpectedFileSize = @{
+        Min = 14000000
+        Max = 18000000
+    }
     
-    # Paths
-    TempDir   = "$env:TEMP\DiscordVoicePatcher"
-    BackupDir = "$env:TEMP\DiscordVoicePatcher\Backups"
-    LogFile   = "$env:TEMP\DiscordVoicePatcher\patcher.log"
-    
-    # Process Names
-    ProcessName = "Discord.exe"
-    ModuleName  = "discord_voice.node"
-    
-    # Memory Offsets (for Discord version 9219)
-    # These offsets point to specific instructions in discord_voice.node that need patching
     Offsets = @{
-        # Stereo Audio Configuration
-        CreateAudioFrameStereo            = 0x116C91  # Enables creation of stereo audio frames
-        AudioEncoderOpusConfigSetChannels = 0x3A0B64  # Sets Opus encoder to 2 channels
-        MonoDownmixer                     = 0xD6319   # Disables mono downmix function
-        EmulateStereoSuccess1             = 0x520CFB  # First stereo emulation flag
-        EmulateStereoSuccess2             = 0x520D07  # Second stereo emulation flag
-        
-        # Bitrate Configuration
-        EmulateBitrateModified   = 0x52115A  # Sets bitrate to 382kbps
-        SetsBitrateBitrateValue  = 0x522F81  # Secondary bitrate location
-        SetsBitrateBitwiseOr     = 0x522F89  # Bitrate validation
-        
-        # Sample Rate Configuration
-        Emulate48Khz = 0x520E63  # Enables 48kHz sample rate
-        
-        # Audio Processing & Filters
-        HighPassFilter       = 0x52CF70  # High-pass filter function
-        HighpassCutoffFilter = 0x8D64B0  # Custom high-pass implementation
-        DcReject             = 0x8D6690  # DC offset rejection filter
-        DownmixFunc          = 0x8D2820  # Stereo-to-mono downmix (disabled)
-        
-        # Validation & Error Handling
-        AudioEncoderOpusConfigIsOk = 0x3A0E00  # Opus config validation
-        ThrowError                 = 0x2B3340  # Error throwing function
+        CreateAudioFrameStereo            = 0x116C91
+        AudioEncoderOpusConfigSetChannels = 0x3A0B64
+        MonoDownmixer                     = 0xD6319
+        EmulateStereoSuccess1             = 0x520CFB
+        EmulateStereoSuccess2             = 0x520D07
+        EmulateBitrateModified            = 0x52115A
+        SetsBitrateBitrateValue           = 0x522F81
+        SetsBitrateBitwiseOr              = 0x522F89
+        Emulate48Khz                      = 0x520E63
+        HighPassFilter                    = 0x52CF70
+        HighpassCutoffFilter              = 0x8D64B0
+        DcReject                          = 0x8D6690
+        DownmixFunc                       = 0x8D2820
+        AudioEncoderOpusConfigIsOk        = 0x3A0E00
+        ThrowError                        = 0x2B3340
     }
 }
 #endregion
 
 #region Helper Functions
 function Get-InternalMultiplier {
-    <#
-    .SYNOPSIS
-        Converts user-facing multiplier to internal multiplier value
-    .DESCRIPTION
-        Discord's base stereo gain is 2x. To achieve user's desired gain:
-        Internal MULTIPLIER = UserGain - 2
-        
-        Examples:
-        - User wants 1x (unity) → MULTIPLIER = -1 → Actual: 2 + (-1) = 1x ✓
-        - User wants 5x         → MULTIPLIER = 3  → Actual: 2 + 3 = 5x ✓
-        - User wants 10x        → MULTIPLIER = 8  → Actual: 2 + 8 = 10x ✓
-    #>
     param([int]$UserMultiplier)
-    
     return $UserMultiplier - 2
 }
 
 function Test-Configuration {
-    <#
-    .SYNOPSIS
-        Validates the current configuration
-    #>
-    
     if ($Script:Config.AudioGainMultiplier -lt 1 -or $Script:Config.AudioGainMultiplier -gt 10) {
         throw "Audio gain multiplier must be between 1 and 10"
+    }
+    return $true
+}
+
+function Save-UserConfig {
+    try {
+        $configData = @{
+            LastGainMultiplier = $Script:Config.AudioGainMultiplier
+            LastBackupEnabled  = -not $Script:Config.SkipBackup
+            LastPatchDate      = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        }
+        
+        $configData | ConvertTo-Json | Out-File $Script:Config.ConfigFile -Force
+        Write-Log "Configuration saved" -Level Info
+    } catch {
+        Write-Log "Failed to save config: $($_.Exception.Message)" -Level Warning
+    }
+}
+
+function Get-UserConfig {
+    try {
+        if (Test-Path $Script:Config.ConfigFile) {
+            $configData = Get-Content $Script:Config.ConfigFile | ConvertFrom-Json
+            Write-Log "Loaded previous configuration" -Level Info
+            return $configData
+        }
+    } catch {
+        Write-Log "Could not load config file" -Level Warning
+    }
+    return $null
+}
+
+function Get-DiscordVersion {
+    try {
+        $processName = $Script:Config.ProcessName -replace '\.exe$',''
+        $discordPath = Get-Process -Name $processName -ErrorAction Stop | 
+            Select-Object -First 1 -ExpandProperty Path
+        
+        if ($discordPath) {
+            $versionInfo = (Get-Item $discordPath).VersionInfo
+            Write-Log "Detected Discord version: $($versionInfo.ProductVersion)" -Level Info
+            return $versionInfo.ProductVersion
+        }
+    } catch {
+        Write-Log "Could not detect Discord version" -Level Warning
+    }
+    return "Unknown"
+}
+
+function Test-FileIntegrity {
+    param([string]$FilePath)
+    
+    if (-not (Test-Path $FilePath)) {
+        Write-Log "File not found: $FilePath" -Level Error
+        return $false
+    }
+    
+    $fileInfo = Get-Item $FilePath
+    $fileSize = $fileInfo.Length
+    
+    Write-Log "File size: $([Math]::Round($fileSize / 1MB, 2)) MB" -Level Info
+    
+    if ($fileSize -lt $Script:Config.ExpectedFileSize.Min -or 
+        $fileSize -gt $Script:Config.ExpectedFileSize.Max) {
+        Write-Log "Warning: File size outside expected range" -Level Warning
+        Write-Host "    Expected: $([Math]::Round($Script:Config.ExpectedFileSize.Min / 1MB, 1))-$([Math]::Round($Script:Config.ExpectedFileSize.Max / 1MB, 1)) MB" -ForegroundColor Yellow
+        Write-Host "    Actual: $([Math]::Round($fileSize / 1MB, 2)) MB" -ForegroundColor Yellow
+        
+        $response = Read-Host "    Continue anyway? (y/N)"
+        if ($response -ne 'y' -and $response -ne 'Y') {
+            return $false
+        }
     }
     
     return $true
 }
 #endregion
 
+#region Backup Management
+function Get-BackupList {
+    if (-not (Test-Path $Script:Config.BackupDir)) {
+        return @()
+    }
+    
+    $backups = Get-ChildItem -Path $Script:Config.BackupDir -Filter "discord_voice.node.*.backup" |
+        Sort-Object LastWriteTime -Descending |
+        ForEach-Object {
+            @{
+                Path = $_.FullName
+                Date = $_.LastWriteTime
+                Size = $_.Length
+                Name = $_.Name
+            }
+        }
+    
+    return $backups
+}
+
+function Show-BackupList {
+    $backups = Get-BackupList
+    
+    if ($backups.Count -eq 0) {
+        Write-Host "No backups found" -ForegroundColor Yellow
+        return
+    }
+    
+    Write-Host ""
+    Write-Host "=======================================================" -ForegroundColor Cyan
+    Write-Host "  Available Backups" -ForegroundColor Cyan
+    Write-Host "=======================================================" -ForegroundColor Cyan
+    
+    for ($i = 0; $i -lt $backups.Count; $i++) {
+        $backup = $backups[$i]
+        $sizeMB = [Math]::Round($backup.Size / 1MB, 2)
+        Write-Host "  [$($i+1)] $($backup.Date.ToString('yyyy-MM-dd HH:mm:ss')) - $sizeMB MB" -ForegroundColor White
+    }
+    
+    Write-Host "=======================================================" -ForegroundColor Cyan
+    Write-Host ""
+}
+
+function Restore-FromBackup {
+    param([string]$BackupPath = $null)
+    
+    Write-Banner
+    Write-Log "Starting restore process..." -Level Info
+    
+    if (-not $BackupPath) {
+        $backups = Get-BackupList
+        
+        if ($backups.Count -eq 0) {
+            Write-Log "No backups found" -Level Error
+            return $false
+        }
+        
+        Show-BackupList
+        
+        $selection = Read-Host "Select backup to restore (1-$($backups.Count)) or Enter for most recent"
+        
+        if ([string]::IsNullOrWhiteSpace($selection)) {
+            $BackupPath = $backups[0].Path
+            Write-Log "Using most recent backup" -Level Info
+        } else {
+            $index = [int]$selection - 1
+            if ($index -lt 0 -or $index -ge $backups.Count) {
+                Write-Log "Invalid selection" -Level Error
+                return $false
+            }
+            $BackupPath = $backups[$index].Path
+        }
+    }
+    
+    $processName = $Script:Config.ProcessName -replace '\.exe$',''
+    $process = Get-Process -Name $processName -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    
+    if (-not $process) {
+        Write-Log "Discord is not running. Please start Discord first." -Level Error
+        return $false
+    }
+    
+    $voiceNodePath = Find-VoiceNodePath
+    if (-not $voiceNodePath) {
+        Write-Log "Could not find discord_voice.node" -Level Error
+        return $false
+    }
+    
+    Write-Log "Target: $voiceNodePath" -Level Info
+    Write-Log "Backup: $BackupPath" -Level Info
+    
+    Write-Host ""
+    Write-Host "Warning: This will replace the current discord_voice.node with the backup" -ForegroundColor Yellow
+    $confirm = Read-Host "Continue? (y/N)"
+    
+    if ($confirm -ne 'y' -and $confirm -ne 'Y') {
+        Write-Log "Restore cancelled" -Level Warning
+        return $false
+    }
+    
+    Write-Log "Closing Discord..." -Level Info
+    try {
+        $process | Stop-Process -Force
+        Start-Sleep -Seconds 2
+    } catch {
+        Write-Log "Failed to close Discord" -Level Error
+        return $false
+    }
+    
+    try {
+        Copy-Item -Path $BackupPath -Destination $voiceNodePath -Force
+        Write-Log "File restored successfully!" -Level Success
+        Write-Host ""
+        Write-Host "=======================================" -ForegroundColor Green
+        Write-Host "  Restore Complete!" -ForegroundColor Green
+        Write-Host "=======================================" -ForegroundColor Green
+        Write-Host "  You can now restart Discord" -ForegroundColor White
+        Write-Host "=======================================" -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Log "Restore failed: $($_.Exception.Message)" -Level Error
+        return $false
+    }
+}
+
+function Find-VoiceNodePath {
+    try {
+        $processName = $Script:Config.ProcessName -replace '\.exe$',''
+        $process = Get-Process -Name $processName -ErrorAction Stop |
+            Select-Object -First 1
+        
+        if (-not $process) {
+            return $null
+        }
+        
+        $modules = $process.Modules | Where-Object { $_.ModuleName -eq $Script:Config.ModuleName }
+        
+        if ($modules) {
+            return $modules[0].FileName
+        }
+    } catch {
+        Write-Log "Error finding voice node: $($_.Exception.Message)" -Level Warning
+    }
+    
+    return $null
+}
+#endregion
+
 #region GUI Functions
 function Show-ConfigurationGUI {
-    <#
-    .SYNOPSIS
-        Displays GUI for user to configure patch settings
-    .OUTPUTS
-        Hashtable with Multiplier and SkipBackup values, or $null if cancelled
-    #>
+    $previousConfig = Get-UserConfig
     
-    # Create form
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Discord Voice Patcher Configuration"
-    $form.ClientSize = New-Object System.Drawing.Size(520, 420)  # Use ClientSize to ensure proper internal space
+    $form.Text = "Discord Voice Patcher Configuration v2.3"
+    $form.ClientSize = New-Object System.Drawing.Size(520, 480)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
@@ -137,7 +379,6 @@ function Show-ConfigurationGUI {
     $form.BackColor = [System.Drawing.Color]::FromArgb(44, 47, 51)
     $form.ForeColor = [System.Drawing.Color]::White
     
-    # Title
     $titleLabel = New-Object System.Windows.Forms.Label
     $titleLabel.Location = New-Object System.Drawing.Point(20, 20)
     $titleLabel.Size = New-Object System.Drawing.Size(480, 30)
@@ -146,33 +387,30 @@ function Show-ConfigurationGUI {
     $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(88, 101, 242)
     $form.Controls.Add($titleLabel)
     
-    # Subtitle
+    $detectedVersion = Get-DiscordVersion
     $subtitleLabel = New-Object System.Windows.Forms.Label
     $subtitleLabel.Location = New-Object System.Drawing.Point(20, 55)
-    $subtitleLabel.Size = New-Object System.Drawing.Size(480, 20)
-    $subtitleLabel.Text = "48kHz | 382kbps | Stereo | Configurable Gain"
+    $subtitleLabel.Size = New-Object System.Drawing.Size(480, 40)
+    $subtitleLabel.Text = "48kHz | 382kbps | Stereo | Configurable Gain`nDetected Discord: $detectedVersion"
     $subtitleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
     $subtitleLabel.ForeColor = [System.Drawing.Color]::FromArgb(185, 187, 190)
     $form.Controls.Add($subtitleLabel)
     
-    # Separator
     $separator1 = New-Object System.Windows.Forms.Label
-    $separator1.Location = New-Object System.Drawing.Point(20, 85)
+    $separator1.Location = New-Object System.Drawing.Point(20, 105)
     $separator1.Size = New-Object System.Drawing.Size(480, 2)
     $separator1.BorderStyle = "Fixed3D"
     $form.Controls.Add($separator1)
     
-    # Gain Section Title
     $gainLabel = New-Object System.Windows.Forms.Label
-    $gainLabel.Location = New-Object System.Drawing.Point(20, 105)
+    $gainLabel.Location = New-Object System.Drawing.Point(20, 125)
     $gainLabel.Size = New-Object System.Drawing.Size(480, 25)
     $gainLabel.Text = "Audio Gain Multiplier"
     $gainLabel.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
     $form.Controls.Add($gainLabel)
     
-    # Current Value Display
     $valueLabel = New-Object System.Windows.Forms.Label
-    $valueLabel.Location = New-Object System.Drawing.Point(20, 140)
+    $valueLabel.Location = New-Object System.Drawing.Point(20, 160)
     $valueLabel.Size = New-Object System.Drawing.Size(480, 35)
     $valueLabel.Text = "1x (Unity Gain - No Amplification)"
     $valueLabel.Font = New-Object System.Drawing.Font("Segoe UI", 14, [System.Drawing.FontStyle]::Bold)
@@ -180,78 +418,107 @@ function Show-ConfigurationGUI {
     $valueLabel.TextAlign = "MiddleCenter"
     $form.Controls.Add($valueLabel)
     
-    # Slider
     $slider = New-Object System.Windows.Forms.TrackBar
-    $slider.Location = New-Object System.Drawing.Point(30, 185)
+    $slider.Location = New-Object System.Drawing.Point(30, 205)
     $slider.Size = New-Object System.Drawing.Size(460, 45)
     $slider.Minimum = 1
     $slider.Maximum = 10
     $slider.TickFrequency = 1
-    $slider.Value = [Math]::Max(1, [Math]::Min(10, $Script:Config.AudioGainMultiplier))
+    
+    $initialValue = if ($previousConfig -and $AudioGainMultiplier -eq 1) { 
+        $previousConfig.LastGainMultiplier 
+    } else { 
+        $AudioGainMultiplier 
+    }
+    $slider.Value = [Math]::Max(1, [Math]::Min(10, $initialValue))
     $slider.BackColor = [System.Drawing.Color]::FromArgb(44, 47, 51)
     
-    # Slider value change event
     $slider.Add_ValueChanged({
         $multiplier = $slider.Value
         
-        # Update display text
         if ($multiplier -eq 1) {
             $valueLabel.Text = "1x (Unity Gain - No Amplification)"
         } else {
             $valueLabel.Text = "${multiplier}x Amplification"
         }
         
-        # Color coding based on safety
         if ($multiplier -le 2) {
-            $valueLabel.ForeColor = [System.Drawing.Color]::FromArgb(87, 242, 135)  # Green - Safe
+            $valueLabel.ForeColor = [System.Drawing.Color]::FromArgb(87, 242, 135)
         } elseif ($multiplier -le 5) {
-            $valueLabel.ForeColor = [System.Drawing.Color]::FromArgb(254, 231, 92)  # Yellow - Moderate
+            $valueLabel.ForeColor = [System.Drawing.Color]::FromArgb(254, 231, 92)
         } else {
-            $valueLabel.ForeColor = [System.Drawing.Color]::FromArgb(237, 66, 69)   # Red - High risk
+            $valueLabel.ForeColor = [System.Drawing.Color]::FromArgb(237, 66, 69)
         }
     })
     
+    $slider.Value = $slider.Value
+    
     $form.Controls.Add($slider)
     
-    # Scale markers (moved down 5px to prevent overlap with slider)
     $scaleLabel = New-Object System.Windows.Forms.Label
-    $scaleLabel.Location = New-Object System.Drawing.Point(30, 235)
+    $scaleLabel.Location = New-Object System.Drawing.Point(30, 255)
     $scaleLabel.Size = New-Object System.Drawing.Size(460, 20)
     $scaleLabel.Text = "1x      2x      3x      4x      5x      6x      7x      8x      9x     10x"
     $scaleLabel.Font = New-Object System.Drawing.Font("Consolas", 8)
     $scaleLabel.ForeColor = [System.Drawing.Color]::FromArgb(150, 152, 157)
     $form.Controls.Add($scaleLabel)
     
-    # Info/Warning text (adjusted position)
     $infoLabel = New-Object System.Windows.Forms.Label
-    $infoLabel.Location = New-Object System.Drawing.Point(20, 265)
+    $infoLabel.Location = New-Object System.Drawing.Point(20, 285)
     $infoLabel.Size = New-Object System.Drawing.Size(480, 40)
-    $infoLabel.Text = "⚠ Recommended: 1-2x for most users`n" +
-                      "⚠ Warning: Values above 5x may cause severe distortion and clipping"
+    $infoLabel.Text = "Warning: Recommended 1-2x for most users`nValues above 5x may cause severe distortion and clipping"
     $infoLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
     $infoLabel.ForeColor = [System.Drawing.Color]::FromArgb(185, 187, 190)
     $form.Controls.Add($infoLabel)
     
-    # Separator
     $separator2 = New-Object System.Windows.Forms.Label
-    $separator2.Location = New-Object System.Drawing.Point(20, 310)
+    $separator2.Location = New-Object System.Drawing.Point(20, 330)
     $separator2.Size = New-Object System.Drawing.Size(480, 2)
     $separator2.BorderStyle = "Fixed3D"
     $form.Controls.Add($separator2)
     
-    # Backup checkbox
     $backupCheckbox = New-Object System.Windows.Forms.CheckBox
-    $backupCheckbox.Location = New-Object System.Drawing.Point(20, 322)
+    $backupCheckbox.Location = New-Object System.Drawing.Point(20, 342)
     $backupCheckbox.Size = New-Object System.Drawing.Size(480, 25)
-    $backupCheckbox.Text = "✓ Create backup before patching (Strongly Recommended)"
-    $backupCheckbox.Checked = -not $Script:Config.SkipBackup
+    $backupCheckbox.Text = "Create backup before patching (Strongly Recommended)"
+    $backupCheckbox.Checked = if ($previousConfig) { 
+        $previousConfig.LastBackupEnabled 
+    } else { 
+        -not $Script:Config.SkipBackup 
+    }
     $backupCheckbox.ForeColor = [System.Drawing.Color]::White
     $backupCheckbox.Font = New-Object System.Drawing.Font("Segoe UI", 9)
     $form.Controls.Add($backupCheckbox)
     
-    # Patch button
+    if ($previousConfig) {
+        $historyLabel = New-Object System.Windows.Forms.Label
+        $historyLabel.Location = New-Object System.Drawing.Point(20, 370)
+        $historyLabel.Size = New-Object System.Drawing.Size(480, 20)
+        $historyLabel.Text = "Last patched: $($previousConfig.LastPatchDate) with $($previousConfig.LastGainMultiplier)x gain"
+        $historyLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8)
+        $historyLabel.ForeColor = [System.Drawing.Color]::FromArgb(150, 152, 157)
+        $form.Controls.Add($historyLabel)
+    }
+    
+    $restoreButton = New-Object System.Windows.Forms.Button
+    $restoreButton.Location = New-Object System.Drawing.Point(20, 425)
+    $restoreButton.Size = New-Object System.Drawing.Size(90, 35)
+    $restoreButton.Text = "Restore"
+    $restoreButton.BackColor = [System.Drawing.Color]::FromArgb(79, 84, 92)
+    $restoreButton.ForeColor = [System.Drawing.Color]::White
+    $restoreButton.FlatStyle = "Flat"
+    $restoreButton.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+    $restoreButton.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $restoreButton.Add_Click({
+        $form.Hide()
+        Restore-FromBackup
+        Read-Host "Press Enter to continue"
+        $form.Close()
+    })
+    $form.Controls.Add($restoreButton)
+    
     $patchButton = New-Object System.Windows.Forms.Button
-    $patchButton.Location = New-Object System.Drawing.Point(300, 365)
+    $patchButton.Location = New-Object System.Drawing.Point(300, 425)
     $patchButton.Size = New-Object System.Drawing.Size(100, 35)
     $patchButton.Text = "Patch"
     $patchButton.BackColor = [System.Drawing.Color]::FromArgb(88, 101, 242)
@@ -269,9 +536,8 @@ function Show-ConfigurationGUI {
     })
     $form.Controls.Add($patchButton)
     
-    # Cancel button
     $cancelButton = New-Object System.Windows.Forms.Button
-    $cancelButton.Location = New-Object System.Drawing.Point(410, 365)
+    $cancelButton.Location = New-Object System.Drawing.Point(410, 425)
     $cancelButton.Size = New-Object System.Drawing.Size(90, 35)
     $cancelButton.Text = "Cancel"
     $cancelButton.BackColor = [System.Drawing.Color]::FromArgb(79, 84, 92)
@@ -285,7 +551,6 @@ function Show-ConfigurationGUI {
     })
     $form.Controls.Add($cancelButton)
     
-    # Show form and return result
     $result = $form.ShowDialog()
     
     if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
@@ -298,14 +563,12 @@ function Show-ConfigurationGUI {
 
 #region Logging Functions
 function Write-Banner {
-    Write-Host @"
-╔═══════════════════════════════════════════════════════════════╗
-║                                                               ║
-║         Discord Voice Quality Patcher v2.1                    ║
-║         48kHz | 382kbps | Stereo | Configurable Gain         ║
-║                                                               ║
-╚═══════════════════════════════════════════════════════════════╝
-"@ -ForegroundColor Cyan
+    Write-Host "=============================================================" -ForegroundColor Cyan
+    Write-Host "                                                             " -ForegroundColor Cyan
+    Write-Host "        Discord Voice Quality Patcher v2.3                   " -ForegroundColor Cyan
+    Write-Host "        48kHz | 382kbps | Stereo | Configurable Gain        " -ForegroundColor Cyan
+    Write-Host "                                                             " -ForegroundColor Cyan
+    Write-Host "=============================================================" -ForegroundColor Cyan
     Write-Host ""
 }
 
@@ -321,14 +584,11 @@ function Write-Log {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $logMessage = "[$timestamp] [$Level] $Message"
     
-    # Write to log file
     try {
         Add-Content -Path $Script:Config.LogFile -Value $logMessage -ErrorAction SilentlyContinue
     } catch {
-        # Silently fail if can't write to log
     }
     
-    # Console output
     $color = switch ($Level) {
         'Success' { 'Green' }
         'Warning' { 'Yellow' }
@@ -337,19 +597,19 @@ function Write-Log {
     }
     
     $prefix = switch ($Level) {
-        'Success' { '[✓]' }
-        'Warning' { '[!]' }
-        'Error'   { '[✗]' }
-        default   { '[•]' }
+        'Success' { '[OK]' }
+        'Warning' { '[!!]' }
+        'Error'   { '[XX]' }
+        default   { '[--]' }
     }
     
     Write-Host "$prefix $Message" -ForegroundColor $color
 }
 
 function Show-Settings {
-    Write-Host "═══════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "=======================================" -ForegroundColor Cyan
     Write-Host "  Current Patch Configuration" -ForegroundColor Cyan
-    Write-Host "═══════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "=======================================" -ForegroundColor Cyan
     Write-Host "  Sample Rate:    $($Script:Config.SampleRate) Hz" -ForegroundColor White
     Write-Host "  Bitrate:        $($Script:Config.Bitrate) kbps" -ForegroundColor White
     Write-Host "  Channels:       $($Script:Config.Channels)" -ForegroundColor White
@@ -358,7 +618,7 @@ function Show-Settings {
         elseif ($Script:Config.AudioGainMultiplier -le 5) { 'Yellow' }
         else { 'Red' }
     )
-    Write-Host "═══════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "=======================================" -ForegroundColor Cyan
     Write-Host ""
 }
 #endregion
@@ -367,7 +627,6 @@ function Show-Settings {
 function Initialize-Environment {
     Write-Log "Initializing environment..." -Level Info
     
-    # Create directories
     @($Script:Config.TempDir, $Script:Config.BackupDir) | ForEach-Object {
         if (-not (Test-Path $_)) {
             New-Item -ItemType Directory -Path $_ -Force | Out-Null
@@ -375,24 +634,26 @@ function Initialize-Environment {
         }
     }
     
-    # Initialize log file
     try {
-        @"
-═══════════════════════════════════════
-Discord Voice Patcher Log
-═══════════════════════════════════════
+        $logHeader = @"
+=======================================
+Discord Voice Patcher Log v2.3
+=======================================
 Started: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 Settings: $($Script:Config.AudioGainMultiplier)x gain, $($Script:Config.SampleRate)Hz, $($Script:Config.Bitrate)kbps
-═══════════════════════════════════════
+Discord Version: $(Get-DiscordVersion)
+=======================================
 
-"@ | Out-File $Script:Config.LogFile -Force
+"@
+        $logHeader | Out-File $Script:Config.LogFile -Force
     } catch {
         Write-Log "Could not create log file" -Level Warning
     }
 }
 
 function Test-DiscordRunning {
-    $processes = Get-Process -Name ($Script:Config.ProcessName -replace '\.exe$', '') -ErrorAction SilentlyContinue
+    $processName = $Script:Config.ProcessName -replace '\.exe$',''
+    $processes = Get-Process -Name $processName -ErrorAction SilentlyContinue
     
     if (-not $processes) {
         Write-Log "Discord is not running" -Level Error
@@ -418,6 +679,15 @@ function Backup-VoiceNode {
         
         Copy-Item -Path $SourcePath -Destination $backupPath -Force
         Write-Log "Backup created: $backupPath" -Level Success
+        
+        $backups = Get-BackupList
+        if ($backups.Count -gt 10) {
+            $backups | Select-Object -Skip 10 | ForEach-Object {
+                Remove-Item $_.Path -Force
+                Write-Log "Removed old backup: $($_.Name)" -Level Info
+            }
+        }
+        
         return $true
     } catch {
         Write-Log "Failed to create backup: $($_.Exception.Message)" -Level Error
@@ -430,7 +700,6 @@ function Backup-VoiceNode {
 function Find-Compiler {
     Write-Log "Searching for C++ compiler..." -Level Info
     
-    # Try MSVC (Visual Studio)
     $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vsWhere) {
         try {
@@ -443,18 +712,15 @@ function Find-Compiler {
                 }
             }
         } catch {
-            # Continue to next compiler
         }
     }
     
-    # Try MinGW
     $gpp = Get-Command "g++" -ErrorAction SilentlyContinue
     if ($gpp) {
         Write-Log "Found MinGW g++" -Level Success
         return @{ Type = 'MinGW'; Path = $gpp.Source }
     }
     
-    # Try Clang
     $clang = Get-Command "clang++" -ErrorAction SilentlyContinue
     if ($clang) {
         Write-Log "Found Clang" -Level Success
@@ -468,9 +734,9 @@ function Find-Compiler {
 
 function Show-CompilerInstallHelp {
     Write-Host ""
-    Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Yellow
+    Write-Host "=======================================================" -ForegroundColor Yellow
     Write-Host "  No C++ Compiler Found" -ForegroundColor Yellow
-    Write-Host "═══════════════════════════════════════════════════════" -ForegroundColor Yellow
+    Write-Host "=======================================================" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Please install one of the following:" -ForegroundColor White
     Write-Host ""
@@ -489,36 +755,12 @@ function Show-CompilerInstallHelp {
 
 #region Source Code Generation
 function Get-AmplifierSourceCode {
-    <#
-    .SYNOPSIS
-        Generates the C++ amplifier/gain control source code
-    #>
-    
     $internalMultiplier = Get-InternalMultiplier -UserMultiplier $Script:Config.AudioGainMultiplier
     
-    return @"
-/*
- * Audio Gain Amplifier Module
- * 
- * User-selected gain: $($Script:Config.AudioGainMultiplier)x
- * Internal multiplier: $internalMultiplier
- * 
- * Calculation:
- *   Discord's base stereo processing applies 2x gain
- *   To get the user's desired Nx gain: MULTIPLIER = N - 2
- *   Final gain = channels + MULTIPLIER = 2 + $internalMultiplier = $($Script:Config.AudioGainMultiplier)x
- * 
- * Examples:
- *   1x (unity)  → MULTIPLIER = -1 → gain = 2 + (-1) = 1x
- *   2x          → MULTIPLIER = 0  → gain = 2 + 0 = 2x
- *   5x          → MULTIPLIER = 3  → gain = 2 + 3 = 5x
- *   10x         → MULTIPLIER = 8  → gain = 2 + 8 = 10x
- */
-
+    $code = @"
 #define MULTIPLIER $internalMultiplier
 #define STEREO_CHANNELS 2
 
-// Voice state memory structure offsets
 struct VoiceStateOffsets {
     static constexpr int BASE_OFFSET = -3553;
     static constexpr int FLAG_OFFSET = 3557;
@@ -528,7 +770,6 @@ struct VoiceStateOffsets {
     static constexpr int FLAG_VALUE = 1002;
 };
 
-// Initialize Discord's voice processing state
 inline void InitializeVoiceState(int* hp_mem) {
     int* state_base = hp_mem + VoiceStateOffsets::BASE_OFFSET;
     *(state_base + VoiceStateOffsets::FLAG_OFFSET) = VoiceStateOffsets::FLAG_VALUE;
@@ -537,7 +778,6 @@ inline void InitializeVoiceState(int* hp_mem) {
     *(int*)((char*)state_base + VoiceStateOffsets::FILTER_STATE_3) = 0;
 }
 
-// Apply gain to audio samples
 inline void ApplyAudioGain(const float* in, float* out, int sample_count, int channels) {
     const float gain = static_cast<float>(channels + MULTIPLIER);
     for (int i = 0; i < sample_count; i++) {
@@ -545,7 +785,6 @@ inline void ApplyAudioGain(const float* in, float* out, int sample_count, int ch
     }
 }
 
-// High-pass cutoff filter (replaced with gain control)
 extern "C" void __cdecl hp_cutoff(
     const float* in, int cutoff_Hz, float* out, int* hp_mem,
     int len, int channels, int Fs, int arch)
@@ -554,7 +793,6 @@ extern "C" void __cdecl hp_cutoff(
     ApplyAudioGain(in, out, channels * len, channels);
 }
 
-// DC rejection filter (replaced with gain control)
 extern "C" void __cdecl dc_reject(
     const float* in, float* out, int* hp_mem,
     int len, int channels, int Fs)
@@ -563,71 +801,44 @@ extern "C" void __cdecl dc_reject(
     ApplyAudioGain(in, out, channels * len, channels);
 }
 "@
+    
+    return $code
 }
 
 function Get-PatcherSourceCode {
-    <#
-    .SYNOPSIS
-        Generates the main C++ patcher source code
-    #>
-    
     $offsets = $Script:Config.Offsets
     
-    return @"
-/*
- * Discord Voice Quality Patcher
- * Version: 2.1
- * 
- * Patches discord_voice.node to enable:
- *   - Stereo audio output
- *   - 48kHz sample rate
- *   - 382kbps Opus bitrate
- *   - $($Script:Config.AudioGainMultiplier)x audio gain
- */
-
+    $code = @"
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
 #include <iostream>
 #include <string>
 
-// Configuration
 #define DISCORD_VERSION $($Script:Config.DiscordVersion)
 #define SAMPLE_RATE $($Script:Config.SampleRate)
 #define BITRATE $($Script:Config.Bitrate)
 #define AUDIO_GAIN $($Script:Config.AudioGainMultiplier)
 
-// External audio functions
 extern "C" void dc_reject(const float*, float*, int*, int, int, int);
 extern "C" void hp_cutoff(const float*, int, float*, int*, int, int, int, int);
 
-// Memory offsets for Discord v$($Script:Config.DiscordVersion)
 namespace Offsets {
-    // Stereo configuration
     constexpr uint32_t CreateAudioFrameStereo = $('0x{0:X}' -f $offsets.CreateAudioFrameStereo);
     constexpr uint32_t AudioEncoderOpusConfigSetChannels = $('0x{0:X}' -f $offsets.AudioEncoderOpusConfigSetChannels);
     constexpr uint32_t MonoDownmixer = $('0x{0:X}' -f $offsets.MonoDownmixer);
     constexpr uint32_t EmulateStereoSuccess1 = $('0x{0:X}' -f $offsets.EmulateStereoSuccess1);
     constexpr uint32_t EmulateStereoSuccess2 = $('0x{0:X}' -f $offsets.EmulateStereoSuccess2);
-    
-    // Bitrate configuration
     constexpr uint32_t EmulateBitrateModified = $('0x{0:X}' -f $offsets.EmulateBitrateModified);
     constexpr uint32_t SetsBitrateBitrateValue = $('0x{0:X}' -f $offsets.SetsBitrateBitrateValue);
     constexpr uint32_t SetsBitrateBitwiseOr = $('0x{0:X}' -f $offsets.SetsBitrateBitwiseOr);
-    
-    // Sample rate
     constexpr uint32_t Emulate48Khz = $('0x{0:X}' -f $offsets.Emulate48Khz);
-    
-    // Audio processing
     constexpr uint32_t HighPassFilter = $('0x{0:X}' -f $offsets.HighPassFilter);
     constexpr uint32_t HighpassCutoffFilter = $('0x{0:X}' -f $offsets.HighpassCutoffFilter);
     constexpr uint32_t DcReject = $('0x{0:X}' -f $offsets.DcReject);
     constexpr uint32_t DownmixFunc = $('0x{0:X}' -f $offsets.DownmixFunc);
-    
-    // Validation
     constexpr uint32_t AudioEncoderOpusConfigIsOk = $('0x{0:X}' -f $offsets.AudioEncoderOpusConfigIsOk);
     constexpr uint32_t ThrowError = $('0x{0:X}' -f $offsets.ThrowError);
-    
     constexpr uint32_t FILE_OFFSET_ADJUSTMENT = 0xC00;
 };
 
@@ -683,7 +894,6 @@ private:
             memcpy((char*)fileData + (offset - Offsets::FILE_OFFSET_ADJUSTMENT), bytes, len);
         };
         
-        // Stereo patches
         printf("  [1/4] Enabling stereo audio...\n");
         PatchBytes(Offsets::EmulateStereoSuccess1, "\x02", 1);
         PatchBytes(Offsets::EmulateStereoSuccess2, "\xEB", 1);
@@ -691,17 +901,14 @@ private:
         PatchBytes(Offsets::AudioEncoderOpusConfigSetChannels, "\x02", 1);
         PatchBytes(Offsets::MonoDownmixer, "\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\xE9", 13);
         
-        // Bitrate patches
         printf("  [2/4] Setting bitrate to 382kbps...\n");
         PatchBytes(Offsets::EmulateBitrateModified, "\x90\xD4\x05", 3);
         PatchBytes(Offsets::SetsBitrateBitrateValue, "\x90\xD4\x05\x00\x00", 5);
         PatchBytes(Offsets::SetsBitrateBitwiseOr, "\x90\x90\x90", 3);
         
-        // Sample rate
         printf("  [3/4] Enabling 48kHz sample rate...\n");
         PatchBytes(Offsets::Emulate48Khz, "\x90\x90\x90", 3);
         
-        // Audio processing
         printf("  [4/4] Injecting custom audio processing...\n");
         PatchBytes(Offsets::HighPassFilter, "\x48\xB8\x10\x9E\xD8\xCF\x08\x02\x00\x00\xC3", 11);
         PatchBytes(Offsets::HighpassCutoffFilter, (const char*)hp_cutoff, 0x100);
@@ -720,7 +927,7 @@ public:
     
     bool PatchFile() {
         printf("\n================================================\n");
-        printf("  Discord Voice Quality Patcher\n");
+        printf("  Discord Voice Quality Patcher v2.3\n");
         printf("================================================\n");
         printf("  Target:  %s\n", modulePath.c_str());
         printf("  Version: %d\n", DISCORD_VERSION);
@@ -728,14 +935,12 @@ public:
                SAMPLE_RATE/1000, BITRATE, AUDIO_GAIN);
         printf("================================================\n\n");
         
-        // Close Discord
         TerminateProcess(process, 0);
         if (!WaitForDiscordClose()) {
             TerminateAllDiscordProcesses();
             Sleep(500);
         }
         
-        // Open file
         printf("Opening file for patching...\n");
         HANDLE file = CreateFileA(modulePath.c_str(), GENERIC_READ | GENERIC_WRITE,
                                   0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -746,7 +951,6 @@ public:
             return false;
         }
         
-        // Get file size
         LARGE_INTEGER fileSize;
         if (!GetFileSizeEx(file, &fileSize)) {
             printf("ERROR: Cannot get file size\n");
@@ -756,7 +960,6 @@ public:
         
         printf("File size: %lld bytes\n", fileSize.QuadPart);
         
-        // Allocate memory
         void* fileData = VirtualAlloc(nullptr, fileSize.QuadPart, 
                                       MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         if (!fileData) {
@@ -765,7 +968,6 @@ public:
             return false;
         }
         
-        // Read file
         DWORD bytesRead;
         if (!ReadFile(file, fileData, fileSize.QuadPart, &bytesRead, NULL)) {
             printf("ERROR: Cannot read file\n");
@@ -774,14 +976,12 @@ public:
             return false;
         }
         
-        // Apply patches
         if (!ApplyPatches(fileData)) {
             VirtualFree(fileData, 0, MEM_RELEASE);
             CloseHandle(file);
             return false;
         }
         
-        // Write patched file
         printf("\nWriting patched file...\n");
         SetFilePointer(file, 0, NULL, FILE_BEGIN);
         DWORD bytesWritten;
@@ -792,7 +992,6 @@ public:
             return false;
         }
         
-        // Cleanup
         VirtualFree(fileData, 0, MEM_RELEASE);
         CloseHandle(file);
         
@@ -808,7 +1007,7 @@ public:
 };
 
 int main() {
-    SetConsoleTitle("Discord Voice Patcher");
+    SetConsoleTitle("Discord Voice Patcher v2.3");
     
     printf("Searching for Discord process...\n");
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -868,14 +1067,11 @@ int main() {
     return 1;
 }
 "@
+    
+    return $code
 }
 
 function New-SourceFiles {
-    <#
-    .SYNOPSIS
-        Creates the C++ source files for compilation
-    #>
-    
     Write-Log "Generating source files..." -Level Info
     
     try {
@@ -896,10 +1092,6 @@ function New-SourceFiles {
 
 #region Compilation
 function Invoke-Compilation {
-    <#
-    .SYNOPSIS
-        Compiles the C++ source files into an executable
-    #>
     param(
         [Parameter(Mandatory)]
         [hashtable]$Compiler,
@@ -955,14 +1147,18 @@ cl.exe /EHsc /O2 /std:c++17 "$($SourceFiles -join '" "')" /Fe"$exePath" /link Ps
 
 #region Main Execution
 function Start-Patching {
-    <#
-    .SYNOPSIS
-        Main patching workflow
-    #>
-    
     Write-Banner
     
-    # Show GUI if not disabled
+    if ($ListBackups) {
+        Show-BackupList
+        return $true
+    }
+    
+    if ($Restore) {
+        $result = Restore-FromBackup
+        return $result
+    }
+    
     if (-not $NoGUI) {
         Write-Log "Opening configuration GUI..." -Level Info
         Write-Host ""
@@ -974,14 +1170,12 @@ function Start-Patching {
             return $false
         }
         
-        # Update config from GUI
         $Script:Config.AudioGainMultiplier = $guiResult.Multiplier
         $Script:Config.SkipBackup = $guiResult.SkipBackup
         
         Write-Host ""
     }
     
-    # Validate configuration
     try {
         Test-Configuration | Out-Null
     } catch {
@@ -991,37 +1185,47 @@ function Start-Patching {
     
     Show-Settings
     
-    # Initialize environment
     Initialize-Environment
     
-    # Check Discord is running
     if (-not (Test-DiscordRunning)) {
         Read-Host "Press Enter to exit"
         return $false
     }
     
-    # Find compiler
+    $voiceNodePath = Find-VoiceNodePath
+    if (-not $voiceNodePath) {
+        Write-Log "Could not find discord_voice.node" -Level Error
+        Read-Host "Press Enter to exit"
+        return $false
+    }
+    
+    Write-Log "Found voice node: $voiceNodePath" -Level Success
+    
+    if (-not (Test-FileIntegrity -FilePath $voiceNodePath)) {
+        Read-Host "Press Enter to exit"
+        return $false
+    }
+    
     $compiler = Find-Compiler
     if (-not $compiler) {
         Read-Host "Press Enter to exit"
         return $false
     }
     
-    # Generate source files
     $sourceFiles = New-SourceFiles
     if (-not $sourceFiles) {
         Read-Host "Press Enter to exit"
         return $false
     }
     
-    # Compile
     $executable = Invoke-Compilation -Compiler $compiler -SourceFiles $sourceFiles
     if (-not $executable) {
         Read-Host "Press Enter to exit"
         return $false
     }
     
-    # Run patcher
+    Save-UserConfig
+    
     Write-Host ""
     Write-Log "Launching patcher..." -Level Info
     Write-Host ""
@@ -1037,19 +1241,18 @@ function Start-Patching {
     }
 }
 
-# Entry Point
 try {
     $success = Start-Patching
     
     Write-Host ""
     if ($success) {
-        Write-Host "═══════════════════════════════════════" -ForegroundColor Green
+        Write-Host "=======================================" -ForegroundColor Green
         Write-Host "  Patching completed successfully!" -ForegroundColor Green
-        Write-Host "═══════════════════════════════════════" -ForegroundColor Green
+        Write-Host "=======================================" -ForegroundColor Green
     } else {
-        Write-Host "═══════════════════════════════════════" -ForegroundColor Red
+        Write-Host "=======================================" -ForegroundColor Red
         Write-Host "  Patching failed or was cancelled" -ForegroundColor Red
-        Write-Host "═══════════════════════════════════════" -ForegroundColor Red
+        Write-Host "=======================================" -ForegroundColor Red
     }
     Write-Host ""
     
@@ -1058,9 +1261,9 @@ try {
     
 } catch {
     Write-Host ""
-    Write-Host "═══════════════════════════════════════" -ForegroundColor Red
+    Write-Host "=======================================" -ForegroundColor Red
     Write-Host "  FATAL ERROR" -ForegroundColor Red
-    Write-Host "═══════════════════════════════════════" -ForegroundColor Red
+    Write-Host "=======================================" -ForegroundColor Red
     Write-Log "Unhandled error: $($_.Exception.Message)" -Level Error
     Write-Host ""
     Write-Host $_.ScriptStackTrace -ForegroundColor Red
