@@ -2,17 +2,25 @@
 
 **Studio-grade audio quality for Discord with configurable gain control.**
 
-![Version](https://img.shields.io/badge/Version-2.1-5865F2?style=flat-square)
+![Version](https://img.shields.io/badge/Version-2.5-5865F2?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-5391FE?style=flat-square)
 ![Discord](https://img.shields.io/badge/Discord-v9219-7289DA?style=flat-square)
 
 ---
 
-## 🆕 What's New in v2.1
+## 🆕 What's New in v2.5
 
 > [!TIP]
-> **Modern GUI with configurable gain!** Choose from 1x to 10x audio amplification with real-time safety warnings. Perfect stereo, 48kHz sampling, and 382kbps bitrate — all in one click.
+> **No voice channel required!** Disk-based fallback automatically finds `discord_voice.node` even when Discord isn't in a voice channel. Plus all the features from v2.1: Modern GUI, 1x-10x gain control, 48kHz sampling, and 382kbps bitrate.
+
+### v2.5 Improvements
+
+✨ **Disk-Based Fallback** — Automatically finds `discord_voice.node` without joining voice channels  
+✨ **Smart Detection** — Searches all Discord variants (Stable, PTB, Canary, Development)  
+✨ **Auto-Elevation** — Automatically requests admin privileges when needed  
+✨ **Enhanced Restore** — Improved backup management with interactive restore menu  
+✨ **Better Logging** — More detailed operation logs for troubleshooting
 
 | Feature | Before | After |
 |---------|:------:|:-----:|
@@ -20,6 +28,7 @@
 | **Bitrate** | ~64 kbps | **382 kbps** ✨ |
 | **Channels** | Mono (downmixed) | **True Stereo** ✨ |
 | **Gain Control** | Fixed | **1x-10x Adjustable** ✨ |
+| **Detection** | Requires voice channel | **Disk-based fallback** 🆕 |
 
 ---
 
@@ -35,17 +44,31 @@ Choose one (Visual Studio recommended):
 **Step 2: Run the Patcher**
 
 ```powershell
-# Right-click PowerShell → "Run as Administrator"
-.\DiscordVoicePatcher.ps1
+# Right-click PowerShell → "Run as Administrator" (or just run it - auto-elevates!)
+.\DiscordVoicePatcher_v2_5.ps1
 ```
 
 <details>
 <summary><strong>Command Line Options (Advanced)</strong></summary>
 
 ```powershell
-.\DiscordVoicePatcher.ps1 -NoGUI -AudioGainMultiplier 3        # 3x gain, no GUI
-.\DiscordVoicePatcher.ps1 -NoGUI -AudioGainMultiplier 1        # Unity gain (no amp)
-.\DiscordVoicePatcher.ps1 -NoGUI -AudioGainMultiplier 5 -SkipBackup  # 5x, skip backup
+# Patch with GUI (auto-elevates if needed)
+.\DiscordVoicePatcher_v2_5.ps1
+
+# Command line with 3x gain, no GUI
+.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 3
+
+# Unity gain (no amplification)
+.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 1
+
+# High gain, skip backup (not recommended)
+.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 5 -SkipBackup
+
+# Restore from most recent backup
+.\DiscordVoicePatcher_v2_5.ps1 -Restore
+
+# List all available backups
+.\DiscordVoicePatcher_v2_5.ps1 -ListBackups
 ```
 </details>
 
@@ -58,23 +81,36 @@ Choose one (Visual Studio recommended):
 | **Operating System** | Windows 10/11 (64-bit) |
 | **PowerShell** | 5.1 or higher |
 | **Discord Version** | v9219 (Stable) |
-| **Permissions** | Administrator |
+| **Permissions** | Administrator (auto-requests if needed) |
 | **Compiler** | MSVC / MinGW / Clang |
 
 ---
 
 ## ✨ Features
 
+### Audio Quality
 - 🎵 **48kHz Sample Rate** — Crystal clear high-frequency reproduction
 - 🔊 **382kbps Opus Bitrate** — Studio-quality encoding
 - 🎧 **True Stereo Output** — Full stereo separation, no downmixing
 - 🎚️ **1x-10x Gain Control** — Adjustable amplification with GUI
+
+### Smart Detection (NEW in v2.5)
+- 🔍 **Disk-Based Fallback** — Finds `discord_voice.node` without voice channel
+- 🔄 **Multi-Variant Support** — Detects Stable, PTB, Canary, and Development
+- 📂 **Intelligent Search** — Automatically finds newest Discord version
+- ⚡ **Auto-Elevation** — Requests admin privileges when needed
+
+### Reliability
 - 🛡️ **Automatic Backups** — Timestamped backups before patching
+- 🔄 **Interactive Restore** — Easy backup restoration with menu
+- 📝 **Comprehensive Logging** — Detailed operation logs
+- ⚙️ **Config Persistence** — Remembers your last settings
+
+### User Experience
 - 🎨 **Modern GUI** — Discord-themed interface with safety warnings
 - ⚡ **Command-Line Support** — Automation-friendly parameters
 - 📊 **Real-Time Warnings** — Color-coded safety indicators
-- 📝 **Comprehensive Logging** — Detailed operation logs
-- 🔄 **Easy Rollback** — Restore from backups anytime
+- 🎯 **Smart Defaults** — Safe settings out of the box
 
 ---
 
@@ -110,21 +146,29 @@ Choose one (Visual Studio recommended):
 | `-AudioGainMultiplier` | Int (1-10) | 1 | Audio amplification factor |
 | `-SkipBackup` | Switch | False | Skip backup creation |
 | `-NoGUI` | Switch | False | Run without GUI |
+| `-Restore` | Switch | False | Restore from most recent backup |
+| `-ListBackups` | Switch | False | List all available backups |
 
 ### Examples
 
 ```powershell
 # Safe default (2x gain with backup)
-.\DiscordVoicePatcher.ps1 -NoGUI -AudioGainMultiplier 2
+.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 2
 
 # Maximum quality (unity gain, no amplification)
-.\DiscordVoicePatcher.ps1 -NoGUI -AudioGainMultiplier 1
+.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 1
 
 # High gain for quiet sources
-.\DiscordVoicePatcher.ps1 -NoGUI -AudioGainMultiplier 5
+.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 5
 
 # Quick patch (skip backup)
-.\DiscordVoicePatcher.ps1 -NoGUI -AudioGainMultiplier 3 -SkipBackup
+.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 3 -SkipBackup
+
+# Restore from backup
+.\DiscordVoicePatcher_v2_5.ps1 -Restore
+
+# View all backups
+.\DiscordVoicePatcher_v2_5.ps1 -ListBackups
 ```
 
 </details>
@@ -135,21 +179,48 @@ Choose one (Visual Studio recommended):
 | Path | Description |
 |------|-------------|
 | `%TEMP%\DiscordVoicePatcher\patcher.log` | Operation logs |
-| `%TEMP%\DiscordVoicePatcher\Backups\` | Voice module backups |
+| `%TEMP%\DiscordVoicePatcher\config.json` | Saved configuration |
+| `%TEMP%\DiscordVoicePatcher\Backups\` | Voice module backups (max 10) |
 | `%TEMP%\DiscordVoicePatcher\*.cpp` | Generated C++ source files |
 | `%TEMP%\DiscordVoicePatcher\*.exe` | Compiled patcher executable |
+
+### Discord Installation Paths (Auto-Detected)
+
+The patcher automatically searches these locations:
+- `%LOCALAPPDATA%\Discord` — Discord Stable
+- `%LOCALAPPDATA%\DiscordPTB` — Public Test Build
+- `%LOCALAPPDATA%\DiscordCanary` — Canary Build
+- `%LOCALAPPDATA%\DiscordDevelopment` — Development Build
 
 ### Backup Naming Format
 ```
 discord_voice.node.YYYYMMDD_HHMMSS.backup
 ```
 
-Example: `discord_voice.node.20250108_143022.backup`
+Example: `discord_voice.node.20250113_143022.backup`
 
 </details>
 
 <details>
 <summary><h2>🔧 How It Works</h2></summary>
+
+### Detection Flow (NEW in v2.5)
+
+```mermaid
+graph TD
+    A[Start Patcher] --> B{Discord Running?}
+    B -->|Yes| C{Voice Module Loaded?}
+    B -->|No| D[Disk Search]
+    C -->|Yes| E[Use Memory Path]
+    C -->|No| D
+    D --> F{Node Found?}
+    F -->|Yes| G[Patch Node]
+    F -->|No| H[Show Error]
+    E --> G
+    G --> I[Create Backup]
+    I --> J[Apply Patches]
+    J --> K[Restart Discord]
+```
 
 ### Patching Process
 
@@ -192,9 +263,9 @@ Examples:
 
 | Issue | Solution |
 |-------|----------|
-| ❌ Discord not running | Start Discord before running patcher |
+| ❌ "Voice node not found" | Discord will be searched on disk automatically (no voice channel needed!) |
 | ❌ No compiler found | Install Visual Studio with C++ workload |
-| ❌ Access denied | Run PowerShell as Administrator |
+| ❌ Access denied | Script will auto-request admin elevation |
 | ❌ Audio distorted | Lower gain multiplier (use 1x-2x) |
 | ❌ Version mismatch | Verify Discord is v9219 |
 
@@ -205,13 +276,24 @@ notepad "$env:TEMP\DiscordVoicePatcher\patcher.log"
 
 ### Restore Backup
 ```powershell
-# List backups
-Get-ChildItem "$env:TEMP\DiscordVoicePatcher\Backups"
+# Interactive restore (recommended)
+.\DiscordVoicePatcher_v2_5.ps1 -Restore
 
-# Restore latest backup
+# List all backups
+.\DiscordVoicePatcher_v2_5.ps1 -ListBackups
+
+# Manual restore
 Copy-Item "$env:TEMP\DiscordVoicePatcher\Backups\discord_voice.node.*.backup" `
           "C:\Path\To\Discord\discord_voice.node"
 ```
+
+### No Voice Channel Required! 🎉
+
+**v2.5 eliminates the need to join a voice channel first.** The patcher now:
+1. Tries to find the voice module in Discord's running process
+2. If not loaded in memory, automatically searches Discord installation directories
+3. Intelligently locates the newest Discord version
+4. Works with Stable, PTB, Canary, and Development builds
 
 </details>
 
@@ -247,12 +329,42 @@ DcReject                          = 0x8D6690
 | **Function Injection** | Insert custom audio processing |
 | **Direct Modification** | Overwrite specific instruction bytes |
 
+### Disk Search Algorithm (NEW)
+
+```powershell
+# Searches in order:
+1. $env:LOCALAPPDATA\Discord\app-*/modules/discord_voice-*/discord_voice/discord_voice.node
+2. $env:LOCALAPPDATA\DiscordPTB\app-*/...
+3. $env:LOCALAPPDATA\DiscordCanary\app-*/...
+4. $env:LOCALAPPDATA\DiscordDevelopment\app-*/...
+
+# Sorting:
+- App folders: Newest version first (semantic versioning)
+- Voice modules: Highest version number first
+- Checks nested folder structure then flat structure
+```
+
 </details>
 
 <details>
 <summary><h2>📋 Changelog</h2></summary>
 
-### v2.1 (Current)
+### v2.5 (2025-01-13) — Current Release
+- ✨ **Disk-based fallback** — No voice channel required to find discord_voice.node
+- ✨ **Auto-elevation** — Automatically requests admin privileges when needed
+- ✨ **Multi-variant detection** — Supports Stable, PTB, Canary, Development
+- ✨ **Interactive restore menu** — Choose from list of backups
+- ✨ **Config persistence** — Remembers last used settings
+- 🔧 Enhanced logging with better error messages
+- 🔧 Improved backup management (max 10 backups)
+- 📚 Updated documentation with new features
+
+### v2.4 (Previous)
+- 🔧 Code cleanup and optimization
+- 🔧 Preserved original patching logic
+- 🐛 Bug fixes and stability improvements
+
+### v2.1
 - ✨ Modern GUI with Discord theming
 - ✨ Configurable gain multiplier (1x-10x)
 - ✨ Command-line parameter support
@@ -278,7 +390,7 @@ DcReject                          = 0x8D6690
 > **Discord Updates** — Discord updates will overwrite the patched file. You'll need to re-patch after major Discord updates.
 
 > [!TIP]
-> **Backups are automatic** — The patcher creates timestamped backups before every modification. You can always restore the original file.
+> **Backups are automatic** — The patcher creates timestamped backups before every modification. You can always restore the original file using `.\DiscordVoicePatcher_v2_5.ps1 -Restore`
 
 ### Best Practices
 
@@ -286,6 +398,7 @@ DcReject                          = 0x8D6690
 - ✅ Start with low gain (1x-2x) and increase gradually
 - ✅ Keep logs for troubleshooting
 - ✅ Verify Discord version before patching
+- ✅ Use `-Restore` to revert if issues occur
 - ⚠️ Test after patching before important calls
 - ⚠️ Be cautious with high gain (5x+) — risk of clipping
 
@@ -294,9 +407,18 @@ DcReject                          = 0x8D6690
 ## 👥 Credits
 
 **Original Source Code & Offsets** — Cypher · Oracle  
-**Script Architecture & GUI** — Claude (Anthropic)
+**Script Architecture & GUI** — Claude (Anthropic)  
+**v2.5 Enhancements** — ProdHallow
 
 > Special thanks to **Cypher** and **Oracle** for discovering the memory offsets and creating the original patching methodology that made this tool possible.
+
+---
+
+## 📥 Download
+
+**Latest Release:** [v2.5](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases/tag/v2.5)
+
+Download `DiscordVoicePatcher_v2_5.ps1` and run with administrator privileges!
 
 ---
 
@@ -309,6 +431,6 @@ DcReject                          = 0x8D6690
 
 **Made with ❤️ for better Discord audio quality**
 
-[Report an Issue](#) · [Request a Feature](#) · [View Changelog](#-changelog)
+[Report an Issue](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/issues) · [View Releases](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases) · [View Changelog](#-changelog)
 
 </div>
