@@ -1,25 +1,28 @@
 <#
 .SYNOPSIS
-    Discord Voice Quality Patcher v2.5 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
+    Discord Voice Quality Patcher v2.6 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
 .PARAMETER AudioGainMultiplier
     Audio gain multiplier (1-10). Default is 1 (unity gain)
 .PARAMETER SkipBackup
     Skip creating a backup of the original file
-.PARAMETER NoGUI
-    Skip GUI and use command-line parameters
 .PARAMETER Restore
     Restore from most recent backup
 .PARAMETER ListBackups
     List all available backups
+.PARAMETER FixAll
+    Fix all detected Discord clients (CLI mode)
+.PARAMETER FixClient
+    Fix a specific client by name pattern (CLI mode)
 #>
 
 [CmdletBinding()]
 param(
     [ValidateRange(1, 10)][int]$AudioGainMultiplier = 1,
     [switch]$SkipBackup,
-    [switch]$NoGUI,
     [switch]$Restore,
-    [switch]$ListBackups
+    [switch]$ListBackups,
+    [switch]$FixAll,
+    [string]$FixClient
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,9 +35,10 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
         $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
         if ($PSBoundParameters.ContainsKey('AudioGainMultiplier')) { $arguments += "-AudioGainMultiplier", $AudioGainMultiplier }
         if ($SkipBackup) { $arguments += "-SkipBackup" }
-        if ($NoGUI) { $arguments += "-NoGUI" }
         if ($Restore) { $arguments += "-Restore" }
         if ($ListBackups) { $arguments += "-ListBackups" }
+        if ($FixAll) { $arguments += "-FixAll" }
+        if ($FixClient) { $arguments += "-FixClient", "`"$FixClient`"" }
         Start-Process powershell.exe -ArgumentList $arguments -Verb RunAs
         exit 0
     } catch {
@@ -49,8 +53,7 @@ $Script:GainExplicitlySet = $PSBoundParameters.ContainsKey('AudioGainMultiplier'
 $Script:Config = @{
     SampleRate = 48000; Bitrate = 382; Channels = "Stereo"
     AudioGainMultiplier = $AudioGainMultiplier; SkipBackup = $SkipBackup.IsPresent
-    DiscordVersion = 9219; DiscordVersionPattern = "^1\.0\.92"
-    ProcessName = "Discord.exe"; ProcessBaseName = "Discord"; ModuleName = "discord_voice.node"
+    ModuleName = "discord_voice.node"
     TempDir = "$env:TEMP\DiscordVoicePatcher"; BackupDir = "$env:TEMP\DiscordVoicePatcher\Backups"
     LogFile = "$env:TEMP\DiscordVoicePatcher\patcher.log"; ConfigFile = "$env:TEMP\DiscordVoicePatcher\config.json"
     MaxBackupCount = 10; ExpectedFileSize = @{ Min = 14000000; Max = 18000000 }
@@ -62,7 +65,20 @@ $Script:Config = @{
         DcReject = 0x8D6690; DownmixFunc = 0x8D2820; AudioEncoderOpusConfigIsOk = 0x3A0E00; ThrowError = 0x2B3340
     }
 }
-$Script:DiscordInfo = $null
+$Script:DoFixAll = $false  # Flag for GUI-triggered FixAll
+
+# Discord Clients Database (multi-client support)
+$Script:DiscordClients = [ordered]@{
+    0 = @{Name="Discord - Stable         [Official]"; Path="$env:LOCALAPPDATA\Discord";            Processes=@("Discord","Update");            Exe="Discord.exe";            Shortcut="Discord"}
+    1 = @{Name="Discord - Canary         [Official]"; Path="$env:LOCALAPPDATA\DiscordCanary";      Processes=@("DiscordCanary","Update");      Exe="DiscordCanary.exe";      Shortcut="Discord Canary"}
+    2 = @{Name="Discord - PTB            [Official]"; Path="$env:LOCALAPPDATA\DiscordPTB";         Processes=@("DiscordPTB","Update");         Exe="DiscordPTB.exe";         Shortcut="Discord PTB"}
+    3 = @{Name="Discord - Development    [Official]"; Path="$env:LOCALAPPDATA\DiscordDevelopment"; Processes=@("DiscordDevelopment","Update"); Exe="DiscordDevelopment.exe"; Shortcut="Discord Development"}
+    4 = @{Name="Lightcord                [Mod]";      Path="$env:LOCALAPPDATA\Lightcord";          Processes=@("Lightcord","Update");          Exe="Lightcord.exe";          Shortcut="Lightcord"}
+    5 = @{Name="BetterDiscord            [Mod]";      Path="$env:LOCALAPPDATA\Discord";            Processes=@("Discord","Update");            Exe="Discord.exe";            Shortcut="Discord"}
+    6 = @{Name="Vencord                  [Mod]";      Path="$env:LOCALAPPDATA\Vencord";            FallbackPath="$env:LOCALAPPDATA\Discord"; Processes=@("Vencord","Discord","Update");       Exe="Discord.exe"; Shortcut="Vencord"}
+    7 = @{Name="Equicord                 [Mod]";      Path="$env:LOCALAPPDATA\Equicord";           FallbackPath="$env:LOCALAPPDATA\Discord"; Processes=@("Equicord","Discord","Update");      Exe="Discord.exe"; Shortcut="Equicord"}
+    8 = @{Name="BetterVencord            [Mod]";      Path="$env:LOCALAPPDATA\BetterVencord";      FallbackPath="$env:LOCALAPPDATA\Discord"; Processes=@("BetterVencord","Discord","Update"); Exe="Discord.exe"; Shortcut="BetterVencord"}
+}
 #endregion
 
 #region Logging
@@ -76,8 +92,9 @@ function Write-Log {
 }
 
 function Write-Banner {
-    Write-Host "`n===== Discord Voice Quality Patcher v2.5 =====" -ForegroundColor Cyan
+    Write-Host "`n===== Discord Voice Quality Patcher v2.6 =====" -ForegroundColor Cyan
     Write-Host "     48kHz | 382kbps | Stereo | Gain Config" -ForegroundColor Cyan
+    Write-Host "        Multi-Client Detection Enabled" -ForegroundColor Cyan
     Write-Host "=============================================`n" -ForegroundColor Cyan
 }
 
@@ -92,6 +109,7 @@ function Show-Settings {
 #region Helpers
 function Save-UserConfig {
     try {
+        EnsureDir (Split-Path $Script:Config.ConfigFile -Parent)
         @{ LastGainMultiplier = $Script:Config.AudioGainMultiplier; LastBackupEnabled = -not $Script:Config.SkipBackup
            LastPatchDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss" } | ConvertTo-Json | Out-File $Script:Config.ConfigFile -Force
     } catch { Write-Log "Failed to save config: $_" -Level Warning }
@@ -116,43 +134,164 @@ function Test-FileIntegrity {
     $size = (Get-Item $FilePath).Length
     Write-Log "File size: $([Math]::Round($size / 1MB, 2)) MB" -Level Info
     if ($size -lt $Script:Config.ExpectedFileSize.Min -or $size -gt $Script:Config.ExpectedFileSize.Max) {
-        Write-Log "Warning: File size outside expected range" -Level Warning
-        if ((Read-Host "Continue anyway? (y/N)") -notin @('y', 'Y')) { return $false }
+        Write-Log "Warning: File size outside expected range (may be different Discord version)" -Level Warning
     }
     return $true
 }
 
-function Test-DiscordVersionCompatibility {
-    param([string]$Version)
-    if ([string]::IsNullOrEmpty($Version) -or $Version -eq "Unknown") { return $true }
-    if ($Version -notmatch $Script:Config.DiscordVersionPattern) {
-        Write-Log "Discord version '$Version' may not be compatible (expected ~$($Script:Config.DiscordVersion))" -Level Warning
-        if ((Read-Host "Continue anyway? (y/N)") -notin @('y', 'Y')) { return $false }
-    }
-    return $true
-}
+function EnsureDir($p) { if (-not (Test-Path $p)) { try { [void](New-Item $p -ItemType Directory -Force) } catch { } } }
 #endregion
 
-#region Discord Process
-function Get-DiscordProcessInfo {
-    param([switch]$Force)
-    if ($Script:DiscordInfo -and -not $Force) { return $Script:DiscordInfo }
+#region Multi-Client Detection
+function Get-PathFromProcess {
+    param([string]$ProcessName)
     try {
-        $proc = Get-Process -Name $Script:Config.ProcessBaseName -ErrorAction SilentlyContinue | Select-Object -First 1
-        if (-not $proc) { $Script:DiscordInfo = $null; return $null }
-        $voiceMod = $proc.Modules | Where-Object { $_.ModuleName -eq $Script:Config.ModuleName } | Select-Object -First 1
-        $ver = if ($proc.Path -and (Test-Path $proc.Path)) { (Get-Item $proc.Path).VersionInfo.ProductVersion } else { "Unknown" }
-        $Script:DiscordInfo = @{ Process = $proc; ProcessId = $proc.Id; Path = $proc.Path; Version = $ver
-                                 VoiceNodePath = $(if ($voiceMod) { $voiceMod.FileName } else { $null }); IsRunning = $true }
-        return $Script:DiscordInfo
-    } catch { $Script:DiscordInfo = $null; return $null }
+        $p = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($p -and $p.MainModule) {
+            return (Split-Path (Split-Path $p.MainModule.FileName -Parent) -Parent)
+        }
+    } catch {}
+    return $null
 }
 
-function Test-DiscordRunning {
-    $info = Get-DiscordProcessInfo -Force
-    if (-not $info) { Write-Log "Discord is not running. Please start Discord first." -Level Error; return $false }
-    Write-Log "Discord running (PID: $($info.ProcessId))" -Level Success
+function Get-PathFromShortcuts {
+    param([string]$ShortcutName)
+    if (-not $ShortcutName) { return $null }
+    $sm = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
+    if (!(Test-Path $sm)) { return $null }
+    $scs = Get-ChildItem $sm -Filter "$ShortcutName.lnk" -Recurse -ErrorAction SilentlyContinue
+    if (-not $scs) { return $null }
+    $ws = New-Object -ComObject WScript.Shell
+    foreach ($lf in $scs) {
+        try {
+            $sc = $ws.CreateShortcut($lf.FullName)
+            if (Test-Path $sc.TargetPath) { return (Split-Path $sc.TargetPath -Parent) }
+        } catch { }
+    }
+    return $null
+}
+
+function Get-RealClientPath {
+    param($ClientObj)
+    $p = $ClientObj.Path
+    if (Test-Path $p) { return $p }
+    if ($ClientObj.FallbackPath -and (Test-Path $ClientObj.FallbackPath)) { return $ClientObj.FallbackPath }
+    foreach ($pr in $ClientObj.Processes) {
+        if ($pr -eq "Update") { continue }
+        $pp = Get-PathFromProcess $pr
+        if ($pp -and (Test-Path $pp)) { return $pp }
+    }
+    if ($ClientObj.Shortcut) {
+        $sp = Get-PathFromShortcuts $ClientObj.Shortcut
+        if ($sp -and (Test-Path $sp)) { return $sp }
+    }
+    return $null
+}
+
+function Find-DiscordAppPath {
+    param([string]$BasePath, [switch]$ReturnDiagnostics)
+    
+    $af = Get-ChildItem $BasePath -Filter "app-*" -Directory -ErrorAction SilentlyContinue | 
+        Sort-Object { $folder = $_; try { if ($folder.Name -match "app-([\d\.]+)") { [Version]$matches[1] } else { $folder.Name } } catch { $folder.Name } } -Descending
+    
+    $diag = @{
+        BasePath = $BasePath; AppFoldersFound = @(); ModulesFolderExists = $false; VoiceModuleExists = $false
+        LatestAppFolder = $null; LatestAppVersion = $null; ModulesPath = $null; VoiceModulePath = $null; Error = $null
+    }
+    
+    if (-not $af -or $af.Count -eq 0) {
+        $diag.Error = "NoAppFolders"
+        if ($ReturnDiagnostics) { return $diag }
+        return $null
+    }
+    
+    $diag.AppFoldersFound = @($af | ForEach-Object { $_.Name })
+    $diag.LatestAppFolder = $af[0].FullName
+    if ($af[0].Name -match "app-([\d\.]+)") { $diag.LatestAppVersion = $matches[1] } else { $diag.LatestAppVersion = $af[0].Name }
+    
+    foreach ($f in $af) {
+        $mp = Join-Path $f.FullName "modules"
+        if (Test-Path $mp) {
+            $diag.ModulesFolderExists = $true
+            $diag.ModulesPath = $mp
+            $vm = Get-ChildItem $mp -Filter "discord_voice*" -Directory -ErrorAction SilentlyContinue
+            if ($vm) {
+                $diag.VoiceModuleExists = $true
+                $diag.VoiceModulePath = $vm[0].FullName
+                if ($ReturnDiagnostics) { return $diag }
+                return $f.FullName
+            }
+        }
+    }
+    
+    if (-not $diag.ModulesFolderExists) { $diag.Error = "NoModulesFolder" }
+    elseif (-not $diag.VoiceModuleExists) { $diag.Error = "NoVoiceModule" }
+    if ($ReturnDiagnostics) { return $diag }
+    return $null
+}
+
+function Get-DiscordAppVersion {
+    param([string]$AppPath)
+    if ($AppPath -match "app-([\d\.]+)") { return $matches[1] }
+    try {
+        $exe = Get-ChildItem $AppPath -Filter "*.exe" | Select-Object -First 1
+        if ($exe) { return (Get-Item $exe.FullName).VersionInfo.ProductVersion }
+    } catch {}
+    return "Unknown"
+}
+
+function Get-InstalledClients {
+    $inst = [System.Collections.ArrayList]@()
+    $foundPaths = [System.Collections.Generic.HashSet[string]]@()
+    
+    foreach ($k in $Script:DiscordClients.Keys) {
+        $c = $Script:DiscordClients[$k]
+        $fp = $null
+        
+        if (Test-Path $c.Path) { $fp = $c.Path }
+        elseif ($c.FallbackPath -and (Test-Path $c.FallbackPath)) { $fp = $c.FallbackPath }
+        else {
+            foreach ($pn in $c.Processes) {
+                if ($pn -eq "Update") { continue }
+                $dp = Get-PathFromProcess $pn
+                if ($dp -and (Test-Path $dp)) { $fp = $dp; break }
+            }
+        }
+        if (-not $fp -and $c.Shortcut) {
+            $sp = Get-PathFromShortcuts $c.Shortcut
+            if ($sp -and (Test-Path $sp)) { $fp = $sp }
+        }
+        
+        if ($fp) {
+            try { $fp = (Get-Item $fp).FullName } catch {}
+            if ($foundPaths.Contains($fp)) { continue }
+            $ap = Find-DiscordAppPath $fp
+            if ($ap) {
+                [void]$inst.Add(@{Index=$k; Name=$c.Name; Path=$fp; AppPath=$ap; Client=$c})
+                [void]$foundPaths.Add($fp)
+            }
+        }
+    }
+    return $inst
+}
+
+function Stop-DiscordProcesses {
+    param([string[]]$ProcessNames)
+    $p = Get-Process -Name $ProcessNames -ErrorAction SilentlyContinue
+    if ($p) {
+        $p | Stop-Process -Force -ErrorAction SilentlyContinue
+        for ($i=0; $i -lt 20; $i++) {
+            if (-not (Get-Process -Name $ProcessNames -ErrorAction SilentlyContinue)) { return $true }
+            Start-Sleep -Milliseconds 250
+        }
+        return $false
+    }
     return $true
+}
+
+function Stop-AllDiscordProcesses {
+    $allProcs = @("Discord","DiscordCanary","DiscordPTB","DiscordDevelopment","Lightcord","BetterVencord","Equicord","Vencord","Update")
+    return Stop-DiscordProcesses $allProcs
 }
 #endregion
 
@@ -168,7 +307,7 @@ function Show-BackupList {
     if ($backups.Count -eq 0) { Write-Host "No backups found" -ForegroundColor Yellow; return }
     Write-Host "`n=== Available Backups ===" -ForegroundColor Cyan
     for ($i = 0; $i -lt $backups.Count; $i++) {
-        Write-Host "  [$($i+1)] $($backups[$i].Date.ToString('yyyy-MM-dd HH:mm:ss')) - $([Math]::Round($backups[$i].Size / 1MB, 2)) MB"
+        Write-Host "  [$($i+1)] $($backups[$i].Date.ToString('yyyy-MM-dd HH:mm:ss')) - $([Math]::Round($backups[$i].Size / 1MB, 2)) MB - $($backups[$i].Name)"
     }
     Write-Host ""
 }
@@ -189,25 +328,64 @@ function Restore-FromBackup {
             $BackupPath = $backups[$idx - 1].Path
         }
     }
-    $info = Get-DiscordProcessInfo -Force
-    if (-not $info -or -not $info.VoiceNodePath) { Write-Log "Discord not running or voice node not found" -Level Error; return $false }
-    Write-Log "Target: $($info.VoiceNodePath)" -Level Info
+    
+    # Find installed clients to restore to
+    $installedClients = Get-InstalledClients
+    if ($installedClients.Count -eq 0) {
+        Write-Log "No Discord clients found to restore to" -Level Error
+        return $false
+    }
+    
+    Write-Log "Found $($installedClients.Count) client(s) to restore:" -Level Info
+    for ($i = 0; $i -lt $installedClients.Count; $i++) {
+        Write-Log "  [$($i+1)] $($installedClients[$i].Name.Trim())" -Level Info
+    }
+    
+    $sel = Read-Host "Select client to restore (1-$($installedClients.Count)) or Enter for first"
+    $targetIdx = 0
+    if (-not [string]::IsNullOrWhiteSpace($sel)) {
+        if (-not [int]::TryParse($sel, [ref]$targetIdx) -or $targetIdx -lt 1 -or $targetIdx -gt $installedClients.Count) {
+            Write-Log "Invalid selection" -Level Error; return $false
+        }
+        $targetIdx--
+    }
+    
+    $targetClient = $installedClients[$targetIdx]
+    $voiceModule = Get-ChildItem "$($targetClient.AppPath)\modules" -Filter "discord_voice*" -Directory | Select-Object -First 1
+    if (-not $voiceModule) {
+        Write-Log "No voice module found in target client" -Level Error
+        return $false
+    }
+    
+    $voiceFolderPath = if (Test-Path "$($voiceModule.FullName)\discord_voice") {
+        "$($voiceModule.FullName)\discord_voice"
+    } else {
+        $voiceModule.FullName
+    }
+    $targetPath = Join-Path $voiceFolderPath "discord_voice.node"
+    
+    Write-Log "Target: $targetPath" -Level Info
     if ((Read-Host "Replace current file with backup? (y/N)") -notin @('y', 'Y')) { return $false }
+    
     try {
-        $info.Process | Stop-Process -Force; Start-Sleep -Seconds 2
-        Copy-Item -Path $BackupPath -Destination $info.VoiceNodePath -Force
-        Write-Log "Restore complete! Restart Discord." -Level Success; return $true
+        Write-Log "Closing Discord processes..." -Level Info
+        Stop-AllDiscordProcesses | Out-Null
+        Start-Sleep -Seconds 2
+        Copy-Item -Path $BackupPath -Destination $targetPath -Force
+        Write-Log "Restore complete! Restart Discord." -Level Success
+        return $true
     } catch { Write-Log "Restore failed: $_" -Level Error; return $false }
 }
 
 function Backup-VoiceNode {
-    param([string]$SourcePath)
+    param([string]$SourcePath, [string]$ClientName = "Discord")
     if ($Script:Config.SkipBackup) { Write-Log "Skipping backup" -Level Warning; return $true }
     try {
-        if (-not (Test-Path $Script:Config.BackupDir)) { New-Item -ItemType Directory -Path $Script:Config.BackupDir -Force | Out-Null }
-        $backupPath = Join-Path $Script:Config.BackupDir "discord_voice.node.$(Get-Date -Format 'yyyyMMdd_HHmmss').backup"
+        EnsureDir $Script:Config.BackupDir
+        $sanitizedName = $ClientName -replace '\s+','_' -replace '\[|\]','' -replace '-','_'
+        $backupPath = Join-Path $Script:Config.BackupDir "discord_voice.node.$sanitizedName.$(Get-Date -Format 'yyyyMMdd_HHmmss').backup"
         Copy-Item -Path $SourcePath -Destination $backupPath -Force
-        Write-Log "Backup created" -Level Success
+        Write-Log "Backup created: $([System.IO.Path]::GetFileName($backupPath))" -Level Success
         $backups = Get-BackupList
         if ($backups.Count -gt $Script:Config.MaxBackupCount) {
             $backups | Select-Object -Skip $Script:Config.MaxBackupCount | ForEach-Object { Remove-Item $_.Path -Force }
@@ -221,11 +399,17 @@ function Backup-VoiceNode {
 function Show-ConfigurationGUI {
     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
     $prevCfg = Get-UserConfig
-    $discordInfo = Get-DiscordProcessInfo
+    $installedClients = Get-InstalledClients
     $initGain = if ($prevCfg -and -not $Script:GainExplicitlySet) { [Math]::Max(1, [Math]::Min(10, $prevCfg.LastGainMultiplier)) } else { $Script:Config.AudioGainMultiplier }
 
+    # Build list of installed client indices for validation
+    $installedIndices = @{}
+    foreach ($ic in $installedClients) {
+        $installedIndices[$ic.Index] = $ic
+    }
+
     $form = New-Object Windows.Forms.Form -Property @{
-        Text = "Discord Voice Patcher v2.5"; ClientSize = "520,450"; StartPosition = "CenterScreen"
+        Text = "Discord Voice Patcher v2.6"; ClientSize = "520,520"; StartPosition = "CenterScreen"
         FormBorderStyle = "FixedDialog"; MaximizeBox = $false; MinimizeBox = $false
         BackColor = [Drawing.Color]::FromArgb(44,47,51); ForeColor = [Drawing.Color]::White
     }
@@ -238,10 +422,45 @@ function Show-ConfigurationGUI {
     }
 
     & $newLabel 20 20 480 30 "Discord Voice Quality Patcher" (New-Object Drawing.Font("Segoe UI", 16, [Drawing.FontStyle]::Bold)) ([Drawing.Color]::FromArgb(88,101,242))
-    & $newLabel 20 55 480 35 "48kHz | 382kbps | Stereo`nDetected: $(if ($discordInfo) { $discordInfo.Version } else { 'Not running' })" (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(185,187,190))
-    & $newLabel 20 105 480 25 "Audio Gain Multiplier" (New-Object Drawing.Font("Segoe UI", 12, [Drawing.FontStyle]::Bold)) $null
+    & $newLabel 20 55 480 20 "48kHz | 382kbps | Stereo | Multi-Client Support" (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(185,187,190))
+    
+    # Client Selection
+    & $newLabel 20 85 480 25 "Discord Client" (New-Object Drawing.Font("Segoe UI", 11, [Drawing.FontStyle]::Bold)) $null
+    
+    $clientCombo = New-Object Windows.Forms.ComboBox -Property @{
+        Location = "20,112"; Size = "480,28"; DropDownStyle = "DropDownList"
+        BackColor = [Drawing.Color]::FromArgb(47,49,54); ForeColor = [Drawing.Color]::White
+        Font = New-Object Drawing.Font("Consolas", 9)
+    }
+    
+    # Add clients with installation status indicator
+    $firstInstalledIndex = -1
+    foreach ($k in $Script:DiscordClients.Keys) {
+        $c = $Script:DiscordClients[$k]
+        $isInstalled = $installedIndices.ContainsKey($k)
+        $prefix = if ($isInstalled) { "[*] " } else { "[ ] " }
+        [void]$clientCombo.Items.Add("$prefix$($c.Name)")
+        if ($isInstalled -and $firstInstalledIndex -eq -1) {
+            $firstInstalledIndex = $k
+        }
+    }
+    
+    # Select first installed client, or first overall if none installed
+    $clientCombo.SelectedIndex = if ($firstInstalledIndex -ge 0) { $firstInstalledIndex } else { 0 }
+    $form.Controls.Add($clientCombo)
+    
+    # Detected clients info
+    $detectedLabel = & $newLabel 20 145 480 20 "" (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(87,242,135))
+    if ($installedClients.Count -gt 0) {
+        $detectedLabel.Text = "Detected: $($installedClients.Count) client(s) installed  |  [*] = Installed"
+    } else {
+        $detectedLabel.Text = "No Discord clients detected - please install Discord first"
+        $detectedLabel.ForeColor = [Drawing.Color]::FromArgb(237,66,69)
+    }
+    
+    & $newLabel 20 175 480 25 "Audio Gain Multiplier" (New-Object Drawing.Font("Segoe UI", 12, [Drawing.FontStyle]::Bold)) $null
 
-    $valueLabel = & $newLabel 20 135 480 30 "" (New-Object Drawing.Font("Segoe UI", 14, [Drawing.FontStyle]::Bold)) $null
+    $valueLabel = & $newLabel 20 205 480 30 "" (New-Object Drawing.Font("Segoe UI", 14, [Drawing.FontStyle]::Bold)) $null
     $valueLabel.TextAlign = [Drawing.ContentAlignment]::MiddleCenter
 
     $updateLabel = {
@@ -251,30 +470,38 @@ function Show-ConfigurationGUI {
     }
 
     $slider = New-Object Windows.Forms.TrackBar -Property @{
-        Location = "30,175"; Size = "460,45"; Minimum = 1; Maximum = 10; TickFrequency = 1
+        Location = "30,245"; Size = "460,45"; Minimum = 1; Maximum = 10; TickFrequency = 1
         BackColor = [Drawing.Color]::FromArgb(44,47,51); Value = $initGain
     }
     $slider.Add_ValueChanged({ & $updateLabel $slider.Value })
     $form.Controls.Add($slider)
     & $updateLabel $initGain
 
-    & $newLabel 30 225 460 20 "1x      2x      3x      4x      5x      6x      7x      8x      9x     10x" (New-Object Drawing.Font("Consolas", 8)) ([Drawing.Color]::FromArgb(150,152,157))
-    & $newLabel 20 250 480 35 "Recommended: 1-2x. Values >5x may cause distortion." (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(185,187,190))
+    & $newLabel 30 295 460 20 "1x      2x      3x      4x      5x      6x      7x      8x      9x     10x" (New-Object Drawing.Font("Consolas", 8)) ([Drawing.Color]::FromArgb(150,152,157))
+    & $newLabel 20 320 480 35 "Recommended: 1-2x. Values >5x may cause distortion." (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(185,187,190))
 
     $chk = New-Object Windows.Forms.CheckBox -Property @{
-        Location = "20,295"; Size = "480,25"; Text = "Create backup before patching (Recommended)"
-        Checked = $(if ($prevCfg) { $prevCfg.LastBackupEnabled } else { -not $Script:Config.SkipBackup })
+        Location = "20,365"; Size = "480,25"; Text = "Create backup before patching (Recommended)"
+        Checked = $(if ($prevCfg -and $null -ne $prevCfg.LastBackupEnabled) { $prevCfg.LastBackupEnabled } else { -not $Script:Config.SkipBackup })
         ForeColor = [Drawing.Color]::White; Font = New-Object Drawing.Font("Segoe UI", 9)
     }
     $form.Controls.Add($chk)
 
-    if ($prevCfg.LastPatchDate) {
-        & $newLabel 20 325 480 20 "Last: $($prevCfg.LastPatchDate) @ $($prevCfg.LastGainMultiplier)x" (New-Object Drawing.Font("Segoe UI", 8)) ([Drawing.Color]::FromArgb(150,152,157))
+    if ($prevCfg -and $prevCfg.LastPatchDate) {
+        & $newLabel 20 395 480 20 "Last: $($prevCfg.LastPatchDate) @ $($prevCfg.LastGainMultiplier)x" (New-Object Drawing.Font("Segoe UI", 8)) ([Drawing.Color]::FromArgb(150,152,157))
+    }
+
+    # Status label for validation messages
+    $statusLabel = & $newLabel 20 420 480 25 "" (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(237,66,69))
+    
+    # Set initial status based on current selection
+    if (-not $installedIndices.ContainsKey($clientCombo.SelectedIndex)) {
+        $statusLabel.Text = "This client is not installed"
     }
 
     $btnStyle = { param($x, $text, $bg, $bold, $action)
         $b = New-Object Windows.Forms.Button -Property @{
-            Location = "$x,390"; Size = "100,35"; Text = $text; FlatStyle = "Flat"
+            Location = "$x,460"; Size = "115,40"; Text = $text; FlatStyle = "Flat"
             BackColor = [Drawing.Color]::FromArgb($bg); ForeColor = [Drawing.Color]::White
             Font = New-Object Drawing.Font("Segoe UI", 10, $(if ($bold) { [Drawing.FontStyle]::Bold } else { [Drawing.FontStyle]::Regular }))
             Cursor = [Windows.Forms.Cursors]::Hand
@@ -283,10 +510,45 @@ function Show-ConfigurationGUI {
     }
 
     & $btnStyle 20 "Restore" "79,84,92" $false { $form.Tag = @{ Action = 'Restore' }; $form.DialogResult = "Abort"; $form.Close() }
-    $patchBtn = & $btnStyle 290 "Patch" "88,101,242" $true { $form.Tag = @{ Action = 'Patch'; Multiplier = $slider.Value; SkipBackup = -not $chk.Checked }; $form.DialogResult = "OK"; $form.Close() }
-    $cancelBtn = & $btnStyle 400 "Cancel" "79,84,92" $false { $form.DialogResult = "Cancel"; $form.Close() }
+    
+    # Patch button with validation
+    $patchBtn = & $btnStyle 140 "Patch" "88,101,242" $true {
+        $selectedIdx = $clientCombo.SelectedIndex
+        if (-not $installedIndices.ContainsKey($selectedIdx)) {
+            $statusLabel.Text = "Selected client is not installed!"
+            return
+        }
+        $form.Tag = @{ Action = 'Patch'; Multiplier = $slider.Value; SkipBackup = -not $chk.Checked; ClientIndex = $selectedIdx }
+        $form.DialogResult = "OK"
+        $form.Close()
+    }
+    
+    # Patch All button with validation
+    $patchAllBtn = & $btnStyle 260 "Patch All" "87,158,87" $true {
+        if ($installedClients.Count -eq 0) {
+            $statusLabel.Text = "No Discord clients detected to patch!"
+            return
+        }
+        $form.Tag = @{ Action = 'PatchAll'; Multiplier = $slider.Value; SkipBackup = -not $chk.Checked }
+        $form.DialogResult = "OK"
+        $form.Close()
+    }
+    
+    $cancelBtn = & $btnStyle 385 "Cancel" "79,84,92" $false { $form.DialogResult = "Cancel"; $form.Close() }
 
-    $form.AcceptButton = $patchBtn; $form.CancelButton = $cancelBtn
+    # Update status when selection changes
+    $clientCombo.Add_SelectedIndexChanged({
+        $selectedIdx = $clientCombo.SelectedIndex
+        if ($installedIndices.ContainsKey($selectedIdx)) {
+            $statusLabel.Text = ""
+            $statusLabel.ForeColor = [Drawing.Color]::FromArgb(87,242,135)
+        } else {
+            $statusLabel.Text = "This client is not installed"
+            $statusLabel.ForeColor = [Drawing.Color]::FromArgb(237,66,69)
+        }
+    })
+
+    $form.CancelButton = $cancelBtn
     try { $null = $form.ShowDialog(); return $form.Tag } finally { $form.Dispose() }
 }
 #endregion
@@ -332,6 +594,7 @@ extern "C" void __cdecl dc_reject(const float* i,float* o,int* m,int l,int c,int
 }
 
 function Get-PatcherSourceCode {
+    param([string]$ProcessName = "Discord.exe", [string]$ModuleName = "discord_voice.node")
     $o = $Script:Config.Offsets; $c = $Script:Config
 @"
 #include <windows.h>
@@ -339,7 +602,6 @@ function Get-PatcherSourceCode {
 #include <psapi.h>
 #include <cstdio>
 #include <cstring>
-#define VER $($c.DiscordVersion)
 #define SR $($c.SampleRate)
 #define BR $($c.Bitrate)
 #define AG $($c.AudioGainMultiplier)
@@ -355,10 +617,10 @@ namespace O {
 };
 class P {
     HANDLE proc; std::string path;
-    void Kill() { HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); if(s==INVALID_HANDLE_VALUE)return;
-        PROCESSENTRY32 e={sizeof(e)}; while(Process32Next(s,&e)) if(!strcmp(e.szExeFile,"$($c.ProcessName)")) { HANDLE p=OpenProcess(PROCESS_TERMINATE,0,e.th32ProcessID); if(p){TerminateProcess(p,0);CloseHandle(p);} } CloseHandle(s); }
-    bool Wait(int n=10) { for(int i=0;i<n;i++){ HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); if(s==INVALID_HANDLE_VALUE)return 0;
-        PROCESSENTRY32 e={sizeof(e)}; bool f=0; while(Process32Next(s,&e)) if(!strcmp(e.szExeFile,"$($c.ProcessName)")){f=1;break;} CloseHandle(s); if(!f)return 1; Sleep(100); } return 0; }
+    void Kill(const char* exeName) { HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); if(s==INVALID_HANDLE_VALUE)return;
+        PROCESSENTRY32 e={sizeof(e)}; while(Process32Next(s,&e)) if(!strcmp(e.szExeFile,exeName)) { HANDLE p=OpenProcess(PROCESS_TERMINATE,0,e.th32ProcessID); if(p){TerminateProcess(p,0);CloseHandle(p);} } CloseHandle(s); }
+    bool Wait(const char* exeName,int n=10) { for(int i=0;i<n;i++){ HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); if(s==INVALID_HANDLE_VALUE)return 0;
+        PROCESSENTRY32 e={sizeof(e)}; bool f=0; while(Process32Next(s,&e)) if(!strcmp(e.szExeFile,exeName)){f=1;break;} CloseHandle(s); if(!f)return 1; Sleep(100); } return 0; }
     bool Patch(void* d) {
         auto W=[&](uint32_t off,const char* b,size_t l){ memcpy((char*)d+(off-O::ADJ),b,l); };
         printf("Patching...\n");
@@ -372,9 +634,9 @@ class P {
     }
 public:
     P(HANDLE p,const std::string& s):proc(p),path(s){}
-    bool Run() {
-        printf("\n=== Discord Patcher v2.5 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
-        TerminateProcess(proc,0); if(!Wait()) { Kill(); Sleep(500); }
+    bool Run(const char* exeName) {
+        printf("\n=== Discord Patcher v2.6 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
+        TerminateProcess(proc,0); if(!Wait(exeName)) { Kill(exeName); Sleep(500); }
         HANDLE f=CreateFileA(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,0,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);
         if(f==INVALID_HANDLE_VALUE){ printf("ERROR: Can't open file\n"); return 0; }
         LARGE_INTEGER sz; GetFileSizeEx(f,&sz);
@@ -386,18 +648,22 @@ public:
         printf("\nSUCCESS! Restart Discord.\n"); return 1;
     }
 };
+const char* PROCESS_NAMES[] = {"$ProcessName", "Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe", "DiscordDevelopment.exe", "Lightcord.exe", NULL};
 int main() {
-    SetConsoleTitle("Discord Patcher v2.5");
+    SetConsoleTitle("Discord Patcher v2.6");
     HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); if(s==INVALID_HANDLE_VALUE){ printf("ERROR\n"); system("pause"); return 1; }
     PROCESSENTRY32 e={sizeof(e)};
-    while(Process32Next(s,&e)) if(!strcmp(e.szExeFile,"$($c.ProcessName)")) {
-        HANDLE p=OpenProcess(PROCESS_ALL_ACCESS,0,e.th32ProcessID); if(!p) continue;
-        HMODULE m[1024]; DWORD n; if(!EnumProcessModules(p,m,sizeof(m),&n)){ CloseHandle(p); continue; }
-        for(DWORD i=0;i<n/sizeof(HMODULE);i++) { char nm[MAX_PATH]; if(GetModuleBaseNameA(p,m[i],nm,MAX_PATH) && !strcmp(nm,"$($c.ModuleName)")) {
-            char mp[MAX_PATH]; GetModuleFileNameExA(p,m[i],mp,MAX_PATH); CloseHandle(s);
-            P x(p,mp); bool ok=x.Run(); CloseHandle(p); system("pause"); return ok?0:1;
-        }}
-        CloseHandle(p);
+    for(const char** pn = PROCESS_NAMES; *pn != NULL; pn++) {
+        SetFilePointer((HANDLE)s,0,0,FILE_BEGIN);
+        while(Process32Next(s,&e)) if(!strcmp(e.szExeFile,*pn)) {
+            HANDLE p=OpenProcess(PROCESS_ALL_ACCESS,0,e.th32ProcessID); if(!p) continue;
+            HMODULE m[1024]; DWORD n; if(!EnumProcessModules(p,m,sizeof(m),&n)){ CloseHandle(p); continue; }
+            for(DWORD i=0;i<n/sizeof(HMODULE);i++) { char nm[MAX_PATH]; if(GetModuleBaseNameA(p,m[i],nm,MAX_PATH) && !strcmp(nm,"$ModuleName")) {
+                char mp[MAX_PATH]; GetModuleFileNameExA(p,m[i],mp,MAX_PATH); CloseHandle(s);
+                P x(p,mp); bool ok=x.Run(*pn); CloseHandle(p); system("pause"); return ok?0:1;
+            }}
+            CloseHandle(p);
+        }
     }
     CloseHandle(s); printf("ERROR: Discord not found\n"); system("pause"); return 1;
 }
@@ -405,10 +671,11 @@ int main() {
 }
 
 function New-SourceFiles {
+    param([string]$ProcessName = "Discord.exe")
     Write-Log "Generating source files..." -Level Info
     try {
         $patcher = "$($Script:Config.TempDir)\patcher.cpp"; $amp = "$($Script:Config.TempDir)\amplifier.cpp"
-        Get-PatcherSourceCode | Out-File $patcher -Encoding ASCII -Force
+        Get-PatcherSourceCode -ProcessName $ProcessName | Out-File $patcher -Encoding ASCII -Force
         Get-AmplifierSourceCode | Out-File $amp -Encoding ASCII -Force
         Write-Log "Source files created" -Level Success
         return @($patcher, $amp)
@@ -436,43 +703,209 @@ function Invoke-Compilation {
 }
 #endregion
 
+#region Core Patching Function
+function Invoke-PatchClients {
+    param(
+        [array]$Clients,
+        [hashtable]$Compiler
+    )
+    
+    $successCount = 0
+    $failedClients = @()
+    
+    foreach ($ci in $Clients) {
+        Write-Log "" -Level Info
+        Write-Log "=== Processing: $($ci.Name.Trim()) ===" -Level Info
+        
+        try {
+            $appPath = $ci.AppPath
+            $version = Get-DiscordAppVersion $appPath
+            Write-Log "Version: $version" -Level Info
+            
+            $voiceModule = Get-ChildItem "$appPath\modules" -Filter "discord_voice*" -Directory | Select-Object -First 1
+            if (-not $voiceModule) {
+                throw "No discord_voice module found"
+            }
+            
+            $voiceFolderPath = if (Test-Path "$($voiceModule.FullName)\discord_voice") {
+                "$($voiceModule.FullName)\discord_voice"
+            } else {
+                $voiceModule.FullName
+            }
+            
+            $voiceNodePath = Join-Path $voiceFolderPath "discord_voice.node"
+            if (-not (Test-Path $voiceNodePath)) {
+                throw "discord_voice.node not found at: $voiceNodePath"
+            }
+            
+            Write-Log "Voice node: $voiceNodePath" -Level Info
+            
+            if (-not (Test-FileIntegrity $voiceNodePath)) {
+                throw "File integrity check failed"
+            }
+            
+            # Backup
+            if (-not (Backup-VoiceNode $voiceNodePath $ci.Name) -and -not $Script:Config.SkipBackup) {
+                throw "Backup failed"
+            }
+            
+            # Generate source with correct process name
+            $src = New-SourceFiles -ProcessName $ci.Client.Exe
+            if (-not $src) { throw "Source generation failed" }
+            
+            $exe = Invoke-Compilation -Compiler $Compiler -SourceFiles $src
+            if (-not $exe) { throw "Compilation failed" }
+            
+            Write-Log "Launching patcher..." -Level Info
+            Start-Process -FilePath $exe -Wait -NoNewWindow
+            
+            Write-Log "Successfully patched $($ci.Name.Trim())!" -Level Success
+            $successCount++
+        } catch {
+            Write-Log "Failed to patch $($ci.Name.Trim()): $_" -Level Error
+            $failedClients += $ci.Name.Trim()
+        }
+    }
+    
+    return @{ Success = $successCount; Failed = $failedClients; Total = $Clients.Count }
+}
+#endregion
+
 #region Main
 function Start-Patching {
     Write-Banner
     if ($ListBackups) { Show-BackupList; return $true }
     if ($Restore) { return Restore-FromBackup }
-
-    if (-not $NoGUI) {
-        Write-Log "Opening GUI..." -Level Info
-        $result = Show-ConfigurationGUI
-        if (-not $result) { Write-Log "Cancelled" -Level Warning; return $false }
-        if ($result.Action -eq 'Restore') { return Restore-FromBackup }
-        if ($result.Action -ne 'Patch') { Write-Log "Cancelled" -Level Warning; return $false }
-        $Script:Config.AudioGainMultiplier = $result.Multiplier
-        $Script:Config.SkipBackup = $result.SkipBackup
+    
+    # CLI Fix All mode or GUI-triggered Fix All
+    if ($FixAll -or $Script:DoFixAll -or $FixClient) {
+        Show-Settings
+        Initialize-Environment
+        
+        Write-Log "Scanning for installed Discord clients..." -Level Info
+        $installedClients = Get-InstalledClients
+        
+        if ($installedClients.Count -eq 0) {
+            Write-Log "No Discord clients found!" -Level Error
+            Read-Host "Press Enter"; return $false
+        }
+        
+        # Filter by client name if specified
+        if ($FixClient) {
+            $installedClients = @($installedClients | Where-Object { $_.Name -like "*$FixClient*" })
+            if ($installedClients.Count -eq 0) {
+                Write-Log "No clients matching '$FixClient' found" -Level Error
+                Read-Host "Press Enter"; return $false
+            }
+        }
+        
+        # Deduplicate by app path
+        $uniquePaths = @{}
+        $uniqueClients = [System.Collections.ArrayList]@()
+        foreach ($c in $installedClients) {
+            if (-not $uniquePaths.ContainsKey($c.AppPath)) {
+                $uniquePaths[$c.AppPath] = $true
+                [void]$uniqueClients.Add($c)
+            }
+        }
+        
+        Write-Log "Found $($uniqueClients.Count) client(s):" -Level Success
+        foreach ($c in $uniqueClients) {
+            $v = Get-DiscordAppVersion $c.AppPath
+            Write-Log "  - $($c.Name.Trim()) (v$v)" -Level Info
+        }
+        
+        # Find compiler
+        $compiler = Find-Compiler
+        if (-not $compiler) { Read-Host "Press Enter"; return $false }
+        
+        # Stop all Discord processes
+        Write-Log "Closing all Discord processes..." -Level Info
+        $stopped = Stop-AllDiscordProcesses
+        if (-not $stopped) {
+            Write-Log "Warning: Some processes may still be running" -Level Warning
+            Start-Sleep -Seconds 2
+        }
+        Start-Sleep -Seconds 1
+        
+        # Patch all clients
+        $result = Invoke-PatchClients -Clients $uniqueClients -Compiler $compiler
+        
+        Write-Log "" -Level Info
+        Write-Log "=== PATCHING COMPLETE ===" -Level Success
+        Write-Log "Success: $($result.Success) / $($result.Total)" -Level Info
+        if ($result.Failed.Count -gt 0) {
+            Write-Log "Failed: $($result.Failed -join ', ')" -Level Warning
+        }
+        
+        Save-UserConfig
+        Read-Host "Press Enter to exit"
+        return ($result.Failed.Count -eq 0)
     }
 
-    Show-Settings; Initialize-Environment
-    if (-not (Test-DiscordRunning)) { Read-Host "Press Enter"; return $false }
-    $info = Get-DiscordProcessInfo
-    if ($info -and -not (Test-DiscordVersionCompatibility $info.Version)) { return $false }
-    if (-not $info.VoiceNodePath) { Write-Log "Voice node not found" -Level Error; Read-Host "Press Enter"; return $false }
-    Write-Log "Found: $($info.VoiceNodePath)" -Level Success
-    if (-not (Test-FileIntegrity $info.VoiceNodePath)) { Read-Host "Press Enter"; return $false }
-    if (-not (Backup-VoiceNode $info.VoiceNodePath) -and -not $Script:Config.SkipBackup) { Read-Host "Press Enter"; return $false }
-    $compiler = Find-Compiler; if (-not $compiler) { Read-Host "Press Enter"; return $false }
-    $src = New-SourceFiles; if (-not $src) { Read-Host "Press Enter"; return $false }
-    $exe = Invoke-Compilation -Compiler $compiler -SourceFiles $src; if (-not $exe) { Read-Host "Press Enter"; return $false }
+    # GUI Mode (always show GUI for volume selection)
+    Write-Log "Opening GUI..." -Level Info
+    $guiResult = Show-ConfigurationGUI
+    if (-not $guiResult) { Write-Log "Cancelled" -Level Warning; return $false }
+    if ($guiResult.Action -eq 'Restore') { return Restore-FromBackup }
+    if ($guiResult.Action -notin @('Patch', 'PatchAll')) { Write-Log "Cancelled" -Level Warning; return $false }
+    
+    $Script:Config.AudioGainMultiplier = $guiResult.Multiplier
+    $Script:Config.SkipBackup = $guiResult.SkipBackup
+    
+    if ($guiResult.Action -eq 'PatchAll') {
+        # Set flag and recurse
+        $Script:DoFixAll = $true
+        return Start-Patching
+    }
+    
+    # Single client patch from GUI - use file-based approach like FixAll
+    Show-Settings
+    Initialize-Environment
+    
+    $selectedClientInfo = $Script:DiscordClients[$guiResult.ClientIndex]
+    Write-Log "Selected client: $($selectedClientInfo.Name.Trim())" -Level Info
+    
+    # Find the installed client data
+    $installedClients = Get-InstalledClients
+    $targetClient = $installedClients | Where-Object { $_.Index -eq $guiResult.ClientIndex } | Select-Object -First 1
+    
+    if (-not $targetClient) {
+        Write-Log "Selected client is not installed!" -Level Error
+        Read-Host "Press Enter"; return $false
+    }
+    
+    # Find compiler
+    $compiler = Find-Compiler
+    if (-not $compiler) { Read-Host "Press Enter"; return $false }
+    
+    # Stop processes for this client
+    Write-Log "Closing Discord processes..." -Level Info
+    $stopped = Stop-DiscordProcesses $selectedClientInfo.Processes
+    if (-not $stopped) {
+        Write-Log "Warning: Some processes may still be running" -Level Warning
+        Start-Sleep -Seconds 2
+    }
+    Start-Sleep -Seconds 1
+    
+    # Patch the single client
+    $result = Invoke-PatchClients -Clients @($targetClient) -Compiler $compiler
+    
+    Write-Log "" -Level Info
+    if ($result.Success -gt 0) {
+        Write-Log "=== PATCHING COMPLETE ===" -Level Success
+    } else {
+        Write-Log "=== PATCHING FAILED ===" -Level Error
+    }
+    
     Save-UserConfig
-    Write-Log "Launching patcher..." -Level Info
-    try { Start-Process -FilePath $exe -Wait -NoNewWindow; Write-Log "Complete!" -Level Success; return $true }
-    catch { Write-Log "Failed: $_" -Level Error; return $false }
+    Read-Host "Press Enter to exit"
+    return ($result.Success -gt 0)
 }
 
 try {
     $success = Start-Patching
     Write-Host "`n$(if ($success) { 'SUCCESS!' } else { 'FAILED/CANCELLED' })" -ForegroundColor $(if ($success) { 'Green' } else { 'Red' })
-    Read-Host "`nPress Enter to exit"
     exit $(if ($success) { 0 } else { 1 })
 } catch {
     Write-Host "`nFATAL ERROR: $_" -ForegroundColor Red
@@ -489,6 +922,19 @@ WHAT THIS DOES
   Patches discord_voice.node to enable: Stereo (vs mono), 382kbps (vs 64kbps),
   48kHz locked (vs negotiated), and configurable gain amplification.
 
+VERSION 2.6 CHANGES
+  - Removed Discord version checks (now works with any version using same offsets)
+  - Added multi-client detection (Stable, Canary, PTB, Development, mods)
+  - Added "Patch All" button to fix all detected clients at once
+  - Added -FixAll and -FixClient CLI parameters
+  - Improved process detection for all Discord variants
+  - GUI shows [*] indicator for installed clients
+  - Unified patching logic via Invoke-PatchClients function
+
+SUPPORTED CLIENTS
+  - Discord Stable, Canary, PTB, Development (Official)
+  - Lightcord, BetterDiscord, Vencord, Equicord, BetterVencord (Mods)
+
 HOW IT WORKS
   1. PowerShell generates C++ code with your settings
   2. Compiles to .exe (needs MSVC/MinGW/Clang)
@@ -498,8 +944,15 @@ HOW IT WORKS
 FILE LOCATION
   %LOCALAPPDATA%\Discord\app-X.X.XXXX\modules\discord_voice-X\discord_voice\
 
+CLI USAGE
+  .\DiscordVoicePatcher.ps1                      # Opens GUI for configuration
+  .\DiscordVoicePatcher.ps1 -FixAll              # Patch all detected clients
+  .\DiscordVoicePatcher.ps1 -FixClient "Canary"  # Patch specific client
+  .\DiscordVoicePatcher.ps1 -Restore             # Restore from backup
+  .\DiscordVoicePatcher.ps1 -ListBackups         # Show available backups
+
 ─────────────────────────────────────────────────────────────────────────────────
-OFFSET TABLE (Discord v9219) - File offset = Memory offset - 0xC00
+OFFSET TABLE - File offset = Memory offset - 0xC00
 ─────────────────────────────────────────────────────────────────────────────────
 Offset     Name                    Patch                Purpose
 ─────────────────────────────────────────────────────────────────────────────────
