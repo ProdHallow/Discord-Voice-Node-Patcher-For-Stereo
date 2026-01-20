@@ -83,7 +83,12 @@ $Script:DiscordClients = [ordered]@{
 
 #region Logging
 function Write-Log {
-    param([Parameter(Mandatory)][string]$Message, [ValidateSet('Info','Success','Warning','Error')][string]$Level = 'Info')
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Message,
+        [ValidateSet('Info','Success','Warning','Error')][string]$Level = 'Info'
+    )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     Add-Content -Path $Script:Config.LogFile -Value "[$timestamp] [$Level] $Message" -ErrorAction SilentlyContinue
     $colors = @{ Success = 'Green'; Warning = 'Yellow'; Error = 'Red'; Info = 'White' }
@@ -714,7 +719,7 @@ function Invoke-PatchClients {
     $failedClients = @()
     
     foreach ($ci in $Clients) {
-        Write-Log "" -Level Info
+        Write-Host ""
         Write-Log "=== Processing: $($ci.Name.Trim()) ===" -Level Info
         
         try {
@@ -831,7 +836,7 @@ function Start-Patching {
         # Patch all clients
         $result = Invoke-PatchClients -Clients $uniqueClients -Compiler $compiler
         
-        Write-Log "" -Level Info
+        Write-Host ""
         Write-Log "=== PATCHING COMPLETE ===" -Level Success
         Write-Log "Success: $($result.Success) / $($result.Total)" -Level Info
         if ($result.Failed.Count -gt 0) {
@@ -891,7 +896,7 @@ function Start-Patching {
     # Patch the single client
     $result = Invoke-PatchClients -Clients @($targetClient) -Compiler $compiler
     
-    Write-Log "" -Level Info
+    Write-Host ""
     if ($result.Success -gt 0) {
         Write-Log "=== PATCHING COMPLETE ===" -Level Success
     } else {
