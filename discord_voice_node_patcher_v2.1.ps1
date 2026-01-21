@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Discord Voice Quality Patcher v2.6.2 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
+    Discord Voice Quality Patcher v2.6.4 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
 .PARAMETER AudioGainMultiplier
     Audio gain multiplier (1-10). Default is 1 (unity gain)
 .PARAMETER SkipBackup
@@ -32,7 +32,7 @@ $ErrorActionPreference = "Stop"
 
 # Auto-Update Configuration
 $Script:UPDATE_URL = "https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1"
-$Script:SCRIPT_VERSION = "2.6.2"
+$Script:SCRIPT_VERSION = "2.6.4"
 
 #region Auto-Elevation
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -106,7 +106,7 @@ function Write-Log {
 }
 
 function Write-Banner {
-    Write-Host "`n===== Discord Voice Quality Patcher v2.6.2 =====" -ForegroundColor Cyan
+    Write-Host "`n===== Discord Voice Quality Patcher v2.6.4 =====" -ForegroundColor Cyan
     Write-Host "      48kHz | 382kbps | Stereo | Gain Config" -ForegroundColor Cyan
     Write-Host "         Multi-Client Detection Enabled" -ForegroundColor Cyan
     Write-Host "===============================================`n" -ForegroundColor Cyan
@@ -806,7 +806,7 @@ class P {
 public:
     P(HANDLE p,const std::string& s):proc(p),path(s){}
     bool Run(const char* exeName) {
-        printf("\n=== Discord Patcher v2.6.2 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
+        printf("\n=== Discord Patcher v2.6.4 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
         TerminateProcess(proc,0); if(!Wait(exeName)) { Kill(exeName); Sleep(500); }
         HANDLE f=CreateFileA(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,0,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);
         if(f==INVALID_HANDLE_VALUE){ printf("ERROR: Can't open file (error %lu)\n", GetLastError()); return 0; }
@@ -822,7 +822,7 @@ public:
 };
 const char* PROCESS_NAMES[] = {"$ProcessName", "Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe", "DiscordDevelopment.exe", "Lightcord.exe", NULL};
 int main() {
-    SetConsoleTitle("Discord Patcher v2.6.2");
+    SetConsoleTitle("Discord Patcher v2.6.4");
     for(const char** pn = PROCESS_NAMES; *pn != NULL; pn++) {
         HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); 
         if(s==INVALID_HANDLE_VALUE){ printf("ERROR: Cannot create snapshot\n"); system("pause"); return 1; }
@@ -849,12 +849,57 @@ function New-SourceFiles {
     param([string]$ProcessName = "Discord.exe")
     Write-Log "Generating source files..." -Level Info
     try {
-        $patcher = "$($Script:Config.TempDir)\patcher.cpp"; $amp = "$($Script:Config.TempDir)\amplifier.cpp"
-        Get-PatcherSourceCode -ProcessName $ProcessName | Out-File $patcher -Encoding ASCII -Force
-        Get-AmplifierSourceCode | Out-File $amp -Encoding ASCII -Force
-        Write-Log "Source files created" -Level Success
+        # Ensure temp directory exists
+        if (-not (Test-Path $Script:Config.TempDir)) {
+            Write-Log "Creating temp directory..." -Level Info
+            New-Item -ItemType Directory -Path $Script:Config.TempDir -Force | Out-Null
+        }
+        
+        $patcher = "$($Script:Config.TempDir)\patcher.cpp"
+        $amp = "$($Script:Config.TempDir)\amplifier.cpp"
+        
+        # Generate source code
+        Write-Log "Generating patcher.cpp..." -Level Info
+        $patcherCode = Get-PatcherSourceCode -ProcessName $ProcessName
+        if ([string]::IsNullOrWhiteSpace($patcherCode)) {
+            throw "Patcher source code generation returned empty"
+        }
+        
+        Write-Log "Generating amplifier.cpp..." -Level Info
+        $ampCode = Get-AmplifierSourceCode
+        if ([string]::IsNullOrWhiteSpace($ampCode)) {
+            throw "Amplifier source code generation returned empty"
+        }
+        
+        # Write files using .NET method (more reliable than Out-File pipeline)
+        Write-Log "Writing source files to disk..." -Level Info
+        [System.IO.File]::WriteAllText($patcher, $patcherCode, [System.Text.Encoding]::ASCII)
+        [System.IO.File]::WriteAllText($amp, $ampCode, [System.Text.Encoding]::ASCII)
+        
+        # Verify files exist and have content
+        if (-not (Test-Path $patcher)) {
+            throw "patcher.cpp was not created at: $patcher"
+        }
+        if (-not (Test-Path $amp)) {
+            throw "amplifier.cpp was not created at: $amp"
+        }
+        
+        $patcherSize = (Get-Item $patcher).Length
+        $ampSize = (Get-Item $amp).Length
+        
+        if ($patcherSize -lt 100) {
+            throw "patcher.cpp is too small ($patcherSize bytes) - generation failed"
+        }
+        if ($ampSize -lt 100) {
+            throw "amplifier.cpp is too small ($ampSize bytes) - generation failed"
+        }
+        
+        Write-Log "Source files created: patcher.cpp ($patcherSize bytes), amplifier.cpp ($ampSize bytes)" -Level Success
         return @($patcher, $amp)
-    } catch { Write-Log "Failed: $_" -Level Error; return $null }
+    } catch { 
+        Write-Log "Failed to create source files: $_" -Level Error
+        return $null 
+    }
 }
 #endregion
 
@@ -865,47 +910,58 @@ function Invoke-Compilation {
     $exe = "$($Script:Config.TempDir)\DiscordVoicePatcher.exe"
     $log = "$($Script:Config.TempDir)\build.log"
     
-    # FIX: Remove old exe if it exists (might be locked)
+    # Remove old exe if it exists (might be locked)
     if (Test-Path $exe) {
         try { 
             Remove-Item $exe -Force -ErrorAction Stop 
         } catch {
-            Write-Log "Warning: Could not remove old exe, it may be locked. Trying alternate name..." -Level Warning
+            Write-Log "Warning: Could not remove old exe, trying alternate name..." -Level Warning
             $exe = "$($Script:Config.TempDir)\DiscordVoicePatcher_$(Get-Date -Format 'HHmmss').exe"
         }
     }
     
-    # FIX: Properly quote each source file individually
-    $quotedSources = ($SourceFiles | ForEach-Object { "`"$_`"" }) -join ' '
+    # Clear old log
+    if (Test-Path $log) { Remove-Item $log -Force -ErrorAction SilentlyContinue }
     
     try {
         switch ($Compiler.Type) {
             'MSVC' {
-                # Build batch file with properly quoted paths
-                $batLines = @(
-                    '@echo off'
-                    "call `"$($Compiler.Path)`""
-                    "cl.exe /EHsc /O2 /std:c++17 $quotedSources /Fe`"$exe`" /link Psapi.lib"
-                )
-                $batLines -join "`r`n" | Out-File "$($Script:Config.TempDir)\build.bat" -Encoding ASCII -Force
+                # Use here-string to avoid all escaping issues
+                # Write each source file explicitly to avoid join/quote problems
+                $src1 = $SourceFiles[0]
+                $src2 = $SourceFiles[1]
+                $vcvars = $Compiler.Path
                 
-                # Run the batch file
-                $pinfo = New-Object System.Diagnostics.ProcessStartInfo
-                $pinfo.FileName = "cmd.exe"
-                $pinfo.Arguments = "/c `"$($Script:Config.TempDir)\build.bat`" > `"$log`" 2>&1"
-                $pinfo.UseShellExecute = $false
-                $pinfo.CreateNoWindow = $true
-                $pinfo.WorkingDirectory = $Script:Config.TempDir
-                $proc = [System.Diagnostics.Process]::Start($pinfo)
-                $proc.WaitForExit()
+                $batContent = @"
+@echo off
+call "$vcvars"
+if errorlevel 1 (
+    echo ERROR: Failed to initialize Visual Studio environment
+    exit /b 1
+)
+cl.exe /EHsc /O2 /std:c++17 "$src1" "$src2" /Fe"$exe" /link Psapi.lib
+"@
+                Set-Content -Path "$($Script:Config.TempDir)\build.bat" -Value $batContent -Encoding ASCII
+                
+                # Run batch file and capture output
+                $output = & cmd.exe /c "`"$($Script:Config.TempDir)\build.bat`"" 2>&1
+                $output | Out-File $log -Force
+                
+                # Show build log if verbose or failed
+                if (-not (Test-Path $exe)) {
+                    Write-Host "=== Build Log ===" -ForegroundColor Yellow
+                    $output | ForEach-Object { Write-Host $_ }
+                }
             }
-            'MinGW' { 
+            'MinGW' {
                 $args = @('-O2', '-std=c++17') + $SourceFiles + @('-o', $exe, '-lpsapi', '-static')
-                & g++ @args 2>&1 | Out-File $log -Force
+                $output = & g++ @args 2>&1
+                $output | Out-File $log -Force
             }
-            'Clang' { 
+            'Clang' {
                 $args = @('-O2', '-std=c++17') + $SourceFiles + @('-o', $exe, '-lpsapi')
-                & clang++ @args 2>&1 | Out-File $log -Force
+                $output = & clang++ @args 2>&1
+                $output | Out-File $log -Force
             }
         }
         if (Test-Path $exe) { Write-Log "Compilation successful!" -Level Success; return $exe }
@@ -1186,6 +1242,18 @@ WHAT THIS DOES
   Patches discord_voice.node to enable: Stereo (vs mono), 382kbps (vs 64kbps),
   48kHz locked (vs negotiated), and configurable gain amplification.
 
+VERSION 2.6.4 CHANGES
+  - Fixed: Source files not being created - Out-File pipeline was silently failing
+  - Fixed: Now uses [System.IO.File]::WriteAllText() for reliable file creation
+  - Added: Verification that source files exist and have content before compilation
+  - Added: More detailed logging during source file generation
+
+VERSION 2.6.3 CHANGES
+  - Fixed: MSVC quoting issue AGAIN - now uses here-string and explicit file paths
+  - Fixed: Removed nested cmd.exe quote parsing that was causing path concatenation
+  - Improved: Simplified batch file generation and execution
+  - Improved: Better error output when compilation fails
+
 VERSION 2.6.2 CHANGES
   - Fixed: MSVC compilation quoting bug - source files were joined incorrectly
     causing "Cannot open source file" error with path containing both files
@@ -1323,7 +1391,7 @@ Compile error       → Need VS C++ workload, MinGW, or Clang
 Access denied       → Close Discord fully, run as admin
 No effect           → Wrong Discord variant (Stable/PTB/Canary are separate)
 Empty string error  → Fixed in v2.6.1
-Cannot open source  → Fixed in v2.6.2 (quoting bug)
+Cannot open source  → Fixed in v2.6.3 (quoting) and v2.6.4 (file creation)
 
 ─────────────────────────────────────────────────────────────────────────────────
 TOOLS
