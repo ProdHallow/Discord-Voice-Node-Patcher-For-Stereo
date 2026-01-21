@@ -13,6 +13,8 @@
     Fix all detected Discord clients (CLI mode)
 .PARAMETER FixClient
     Fix a specific client by name pattern (CLI mode)
+.PARAMETER SkipUpdateCheck
+    Skip checking for script updates at startup
 #>
 
 [CmdletBinding()]
@@ -22,10 +24,15 @@ param(
     [switch]$Restore,
     [switch]$ListBackups,
     [switch]$FixAll,
-    [string]$FixClient
+    [string]$FixClient,
+    [switch]$SkipUpdateCheck
 )
 
 $ErrorActionPreference = "Stop"
+
+# Auto-Update Configuration
+$Script:UPDATE_URL = "https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1"
+$Script:SCRIPT_VERSION = "2.6.2"
 
 #region Auto-Elevation
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -147,6 +154,135 @@ function Test-FileIntegrity {
 }
 
 function EnsureDir($p) { if ($p -and -not (Test-Path $p)) { try { [void](New-Item $p -ItemType Directory -Force) } catch { } } }
+
+#region Auto-Update
+function Check-ForUpdate {
+    param([System.Windows.Forms.RichTextBox]$StatusBox = $null, [System.Windows.Forms.Form]$Form = $null)
+    
+    try {
+        if ($StatusBox) { Add-Status $StatusBox $Form "Checking for script updates..." "Blue" }
+        else { Write-Log "Checking for script updates..." -Level Info }
+        
+        # If running via irm | iex, we're already on latest
+        if ([string]::IsNullOrEmpty($PSCommandPath)) {
+            if ($StatusBox) { Add-Status $StatusBox $Form "[OK] Running latest version from web" "LimeGreen" }
+            else { Write-Log "Running latest version from web" -Level Success }
+            return @{ UpdateAvailable = $false; Reason = "WebExecution" }
+        }
+        
+        $tempFile = Join-Path $env:TEMP "DiscordVoicePatcher_Update_$(Get-Random).ps1"
+        
+        try {
+            Invoke-WebRequest -Uri $Script:UPDATE_URL -OutFile $tempFile -UseBasicParsing -TimeoutSec 15 | Out-Null
+        } catch {
+            if ($StatusBox) { Add-Status $StatusBox $Form "[!] Could not check for updates: $($_.Exception.Message)" "Orange" }
+            else { Write-Log "Could not check for updates: $($_.Exception.Message)" -Level Warning }
+            return @{ UpdateAvailable = $false; Reason = "NetworkError"; Error = $_.Exception.Message }
+        }
+        
+        if (-not (Test-Path $tempFile)) {
+            return @{ UpdateAvailable = $false; Reason = "DownloadFailed" }
+        }
+        
+        # Compare content (normalize line endings)
+        $remoteContent = (Get-Content $tempFile -Raw) -replace "`r`n", "`n" -replace "`r", "`n"
+        $localContent = (Get-Content $PSCommandPath -Raw) -replace "`r`n", "`n" -replace "`r", "`n"
+        
+        $remoteContent = $remoteContent.Trim()
+        $localContent = $localContent.Trim()
+        
+        if ($remoteContent -ne $localContent) {
+            # Extract version from remote if possible
+            $remoteVersion = "Unknown"
+            if ($remoteContent -match 'SCRIPT_VERSION\s*=\s*"([^"]+)"') {
+                $remoteVersion = $matches[1]
+            }
+            
+            if ($StatusBox) { Add-Status $StatusBox $Form "[!] Update available! (v$Script:SCRIPT_VERSION -> v$remoteVersion)" "Yellow" }
+            else { Write-Log "Update available! (v$Script:SCRIPT_VERSION -> v$remoteVersion)" -Level Warning }
+            
+            return @{ UpdateAvailable = $true; TempFile = $tempFile; RemoteVersion = $remoteVersion; LocalVersion = $Script:SCRIPT_VERSION }
+        } else {
+            Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+            if ($StatusBox) { Add-Status $StatusBox $Form "[OK] You are on the latest version (v$Script:SCRIPT_VERSION)" "LimeGreen" }
+            else { Write-Log "You are on the latest version (v$Script:SCRIPT_VERSION)" -Level Success }
+            return @{ UpdateAvailable = $false; Reason = "UpToDate" }
+        }
+    } catch {
+        if ($StatusBox) { Add-Status $StatusBox $Form "[!] Update check failed: $($_.Exception.Message)" "Orange" }
+        else { Write-Log "Update check failed: $($_.Exception.Message)" -Level Warning }
+        return @{ UpdateAvailable = $false; Reason = "Error"; Error = $_.Exception.Message }
+    }
+}
+
+function Apply-ScriptUpdate {
+    param(
+        [string]$UpdatedScriptPath,
+        [string]$CurrentScriptPath,
+        [switch]$RestartAfter
+    )
+    
+    if (-not (Test-Path $UpdatedScriptPath)) {
+        Write-Log "Update file not found: $UpdatedScriptPath" -Level Error
+        return $false
+    }
+    
+    # Create a batch file to replace the script and optionally restart
+    $batchFile = Join-Path $env:TEMP "DiscordVoicePatcher_Update.bat"
+    
+    $batchContent = @"
+@echo off
+echo Applying update...
+timeout /t 2 /nobreak >nul
+copy /Y "$UpdatedScriptPath" "$CurrentScriptPath" >nul
+if errorlevel 1 (
+    echo Failed to copy update file!
+    pause
+    exit /b 1
+)
+echo Update applied successfully!
+timeout /t 1 /nobreak >nul
+"@
+    
+    if ($RestartAfter) {
+        $batchContent += @"
+
+echo Restarting script...
+powershell.exe -ExecutionPolicy Bypass -File "$CurrentScriptPath"
+"@
+    }
+    
+    $batchContent += @"
+
+del "$UpdatedScriptPath" >nul 2>&1
+(goto) 2>nul & del "%~f0"
+"@
+    
+    $batchContent | Out-File $batchFile -Encoding ASCII -Force
+    
+    Write-Log "Update will be applied after script closes..." -Level Info
+    Start-Process "cmd.exe" -ArgumentList "/c", "`"$batchFile`"" -WindowStyle Hidden
+    
+    return $true
+}
+
+function Add-Status {
+    param(
+        [System.Windows.Forms.RichTextBox]$StatusBox,
+        [System.Windows.Forms.Form]$Form,
+        [string]$Message,
+        [string]$ColorName = "White"
+    )
+    if ($null -eq $StatusBox) { return }
+    $color = try { [System.Drawing.Color]::FromName($ColorName) } catch { [System.Drawing.Color]::White }
+    $timestamp = Get-Date -Format "HH:mm:ss"
+    $StatusBox.SelectionStart = $StatusBox.TextLength
+    $StatusBox.SelectionLength = 0
+    $StatusBox.SelectionColor = $color
+    $StatusBox.AppendText("[$timestamp] $Message`r`n")
+    $StatusBox.ScrollToCaret()
+    if ($null -ne $Form) { $Form.Refresh(); [System.Windows.Forms.Application]::DoEvents() }
+}
 #endregion
 
 #region Multi-Client Detection
@@ -436,7 +572,7 @@ function Show-ConfigurationGUI {
     $Script:GuiInstalledClients = $installedClients
 
     $form = New-Object Windows.Forms.Form -Property @{
-        Text = "Discord Voice Patcher v2.6.2"; ClientSize = "520,520"; StartPosition = "CenterScreen"
+        Text = "Discord Voice Patcher v$Script:SCRIPT_VERSION"; ClientSize = "520,560"; StartPosition = "CenterScreen"
         FormBorderStyle = "FixedDialog"; MaximizeBox = $false; MinimizeBox = $false
         BackColor = [Drawing.Color]::FromArgb(44,47,51); ForeColor = [Drawing.Color]::White
     }
@@ -448,7 +584,11 @@ function Show-ConfigurationGUI {
         $form.Controls.Add($l); $l
     }
 
-    & $newLabel 20 20 480 30 "Discord Voice Quality Patcher" (New-Object Drawing.Font("Segoe UI", 16, [Drawing.FontStyle]::Bold)) ([Drawing.Color]::FromArgb(88,101,242))
+    & $newLabel 20 20 400 30 "Discord Voice Quality Patcher" (New-Object Drawing.Font("Segoe UI", 16, [Drawing.FontStyle]::Bold)) ([Drawing.Color]::FromArgb(88,101,242))
+    
+    # Version label with update link
+    $versionLabel = & $newLabel 420 28 80 20 "v$Script:SCRIPT_VERSION" (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(150,152,157))
+    
     & $newLabel 20 55 480 20 "48kHz | 382kbps | Stereo | Multi-Client Support" (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(185,187,190))
     
     # Client Selection
@@ -866,6 +1006,34 @@ function Invoke-PatchClients {
 #region Main
 function Start-Patching {
     Write-Banner
+    
+    # Check for updates (unless skipped)
+    if (-not $SkipUpdateCheck -and -not [string]::IsNullOrEmpty($PSCommandPath)) {
+        $updateResult = Check-ForUpdate
+        if ($updateResult.UpdateAvailable) {
+            Write-Host ""
+            Write-Host "A new version is available: v$($updateResult.RemoteVersion)" -ForegroundColor Yellow
+            Write-Host "Current version: v$($updateResult.LocalVersion)" -ForegroundColor Cyan
+            Write-Host ""
+            $response = Read-Host "Would you like to update now? (Y/n)"
+            if ($response -eq '' -or $response -match '^[Yy]') {
+                Write-Log "Applying update..." -Level Info
+                if (Apply-ScriptUpdate -UpdatedScriptPath $updateResult.TempFile -CurrentScriptPath $PSCommandPath -RestartAfter) {
+                    Write-Log "Update prepared! Script will restart..." -Level Success
+                    Start-Sleep -Seconds 2
+                    exit 0
+                } else {
+                    Write-Log "Failed to apply update. Continuing with current version..." -Level Warning
+                    if (Test-Path $updateResult.TempFile) { Remove-Item $updateResult.TempFile -Force -ErrorAction SilentlyContinue }
+                }
+            } else {
+                Write-Log "Update skipped. Continuing with current version..." -Level Info
+                if (Test-Path $updateResult.TempFile) { Remove-Item $updateResult.TempFile -Force -ErrorAction SilentlyContinue }
+            }
+            Write-Host ""
+        }
+    }
+    
     if ($ListBackups) { Show-BackupList; return $true }
     if ($Restore) { return Restore-FromBackup }
     
@@ -1023,6 +1191,9 @@ VERSION 2.6.2 CHANGES
     causing "Cannot open source file" error with path containing both files
   - Fixed: MinGW/Clang argument passing now uses proper array splatting
   - Improved: Batch file generation uses line array instead of string concat
+  - Added: Auto-update feature - checks GitHub for new versions at startup
+  - Added: -SkipUpdateCheck parameter to bypass update checking
+  - Added: BAT launcher for always running latest version from GitHub
 
 VERSION 2.6.1 CHANGES
   - Fixed: Empty string parameter error in Write-Log (AllowEmptyString/AllowNull)
@@ -1064,6 +1235,12 @@ CLI USAGE
   .\DiscordVoicePatcher.ps1 -FixClient "Canary"  # Patch specific client
   .\DiscordVoicePatcher.ps1 -Restore             # Restore from backup
   .\DiscordVoicePatcher.ps1 -ListBackups         # Show available backups
+  .\DiscordVoicePatcher.ps1 -SkipUpdateCheck     # Skip checking for updates
+
+BAT LAUNCHER (Recommended)
+  Use DiscordVoicePatcher.bat to always run the latest version from GitHub.
+  The BAT file uses: irm <url> | iex
+  This ensures users always get the newest version without manual updates.
 
 ─────────────────────────────────────────────────────────────────────────────────
 OFFSET TABLE - File offset = Memory offset - 0xC00
