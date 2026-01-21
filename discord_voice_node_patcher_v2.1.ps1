@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Discord Voice Quality Patcher v2.6.5 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
+    Discord Voice Quality Patcher v2.6.7 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
 .PARAMETER AudioGainMultiplier
     Audio gain multiplier (1-10). Default is 1 (unity gain)
 .PARAMETER SkipBackup
@@ -30,9 +30,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Load Windows Forms early (needed for GUI and some function parameter types)
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing -ErrorAction SilentlyContinue
+
 # Auto-Update Configuration
 $Script:UPDATE_URL = "https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1"
-$Script:SCRIPT_VERSION = "2.6.5"
+$Script:SCRIPT_VERSION = "2.6.7"
 
 #region Auto-Elevation
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -106,7 +109,7 @@ function Write-Log {
 }
 
 function Write-Banner {
-    Write-Host "`n===== Discord Voice Quality Patcher v2.6.5 =====" -ForegroundColor Cyan
+    Write-Host "`n===== Discord Voice Quality Patcher v2.6.7 =====" -ForegroundColor Cyan
     Write-Host "      48kHz | 382kbps | Stereo | Gain Config" -ForegroundColor Cyan
     Write-Host "         Multi-Client Detection Enabled" -ForegroundColor Cyan
     Write-Host "===============================================`n" -ForegroundColor Cyan
@@ -772,7 +775,9 @@ function Get-PatcherSourceCode {
 #include <tlhelp32.h>
 #include <psapi.h>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
+#include <string>
 #define SR $($c.SampleRate)
 #define BR $($c.Bitrate)
 #define AG $($c.AudioGainMultiplier)
@@ -806,7 +811,7 @@ class P {
 public:
     P(HANDLE p,const std::string& s):proc(p),path(s){}
     bool Run(const char* exeName) {
-        printf("\n=== Discord Patcher v2.6.5 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
+        printf("\n=== Discord Patcher v2.6.7 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
         TerminateProcess(proc,0); if(!Wait(exeName)) { Kill(exeName); Sleep(500); }
         HANDLE f=CreateFileA(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,0,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);
         if(f==INVALID_HANDLE_VALUE){ printf("ERROR: Can't open file (error %lu)\n", GetLastError()); return 0; }
@@ -822,7 +827,7 @@ public:
 };
 const char* PROCESS_NAMES[] = {"$ProcessName", "Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe", "DiscordDevelopment.exe", "Lightcord.exe", NULL};
 int main() {
-    SetConsoleTitle("Discord Patcher v2.6.5");
+    SetConsoleTitle("Discord Patcher v2.6.7");
     for(const char** pn = PROCESS_NAMES; *pn != NULL; pn++) {
         HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); 
         if(s==INVALID_HANDLE_VALUE){ printf("ERROR: Cannot create snapshot\n"); system("pause"); return 1; }
@@ -1245,6 +1250,16 @@ WHAT THIS DOES
   Patches discord_voice.node to enable: Stereo (vs mono), 382kbps (vs 64kbps),
   48kHz locked (vs negotiated), and configurable gain amplification.
 
+VERSION 2.6.7 CHANGES
+  - Fixed: Missing #include <cstdint> for uint32_t type definition
+  - Fixed: Missing #include <string> for std::string class
+  - These missing headers caused "missing type specifier" and "string is not 
+    a member of std" compilation errors on some Visual Studio versions
+
+VERSION 2.6.6 CHANGES
+  - Fixed: "Unable to find type [System.Windows.Forms.RichTextBox]" error
+  - Fixed: Windows Forms assembly now loaded at script start before function definitions
+
 VERSION 2.6.5 CHANGES
   - Fixed: MSVC batch file now uses caret (^) line continuation
   - Fixed: Each source file on its own line to prevent concatenation
@@ -1400,7 +1415,7 @@ Compile error       → Need VS C++ workload, MinGW, or Clang
 Access denied       → Close Discord fully, run as admin
 No effect           → Wrong Discord variant (Stable/PTB/Canary are separate)
 Empty string error  → Fixed in v2.6.1
-Cannot open source  → Fixed in v2.6.3 (quoting) and v2.6.5 (file creation)
+Cannot open source  → Fixed in v2.6.3 (quoting) and v2.6.6 (file creation)
 
 ─────────────────────────────────────────────────────────────────────────────────
 TOOLS
