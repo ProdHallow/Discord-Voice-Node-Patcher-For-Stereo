@@ -6,5 +6,8 @@ echo ========================================
 echo.
 echo Downloading latest version...
 echo.
-powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1 | iex"
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+"Invoke-RestMethod 'https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/main/discord_voice_node_patcher_v2.1.ps1' | Invoke-Expression"
+
 pause
