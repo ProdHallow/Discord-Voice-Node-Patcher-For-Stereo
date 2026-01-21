@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Discord Voice Quality Patcher v2.6.7 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
+    Discord Voice Quality Patcher v3.0 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
 .PARAMETER AudioGainMultiplier
     Audio gain multiplier (1-10). Default is 1 (unity gain)
 .PARAMETER SkipBackup
@@ -35,7 +35,7 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing -ErrorAction Silentl
 
 # Auto-Update Configuration
 $Script:UPDATE_URL = "https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1"
-$Script:SCRIPT_VERSION = "2.6.7"
+$Script:SCRIPT_VERSION = "3.0"
 
 #region Auto-Elevation
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -67,6 +67,7 @@ $Script:Config = @{
     TempDir = "$env:TEMP\DiscordVoicePatcher"; BackupDir = "$env:TEMP\DiscordVoicePatcher\Backups"
     LogFile = "$env:TEMP\DiscordVoicePatcher\patcher.log"; ConfigFile = "$env:TEMP\DiscordVoicePatcher\config.json"
     MaxBackupCount = 10; ExpectedFileSize = @{ Min = 14000000; Max = 18000000 }
+    VoiceBackupAPI = "https://api.github.com/repos/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/contents/discord_voice"
     Offsets = @{
         CreateAudioFrameStereo = 0x116C91; AudioEncoderOpusConfigSetChannels = 0x3A0B64
         MonoDownmixer = 0xD6319; EmulateStereoSuccess1 = 0x520CFB; EmulateStereoSuccess2 = 0x520D07
@@ -109,7 +110,7 @@ function Write-Log {
 }
 
 function Write-Banner {
-    Write-Host "`n===== Discord Voice Quality Patcher v2.6.7 =====" -ForegroundColor Cyan
+    Write-Host "`n===== Discord Voice Quality Patcher v3.0 =====" -ForegroundColor Cyan
     Write-Host "      48kHz | 382kbps | Stereo | Gain Config" -ForegroundColor Cyan
     Write-Host "         Multi-Client Detection Enabled" -ForegroundColor Cyan
     Write-Host "===============================================`n" -ForegroundColor Cyan
@@ -160,7 +161,7 @@ function EnsureDir($p) { if ($p -and -not (Test-Path $p)) { try { [void](New-Ite
 
 #region Auto-Update
 function Check-ForUpdate {
-    param([System.Windows.Forms.RichTextBox]$StatusBox = $null, [System.Windows.Forms.Form]$Form = $null)
+    param($StatusBox = $null, $Form = $null)
     
     try {
         if ($StatusBox) { Add-Status $StatusBox $Form "Checking for script updates..." "Blue" }
@@ -271,8 +272,8 @@ del "$UpdatedScriptPath" >nul 2>&1
 
 function Add-Status {
     param(
-        [System.Windows.Forms.RichTextBox]$StatusBox,
-        [System.Windows.Forms.Form]$Form,
+        $StatusBox,
+        $Form,
         [string]$Message,
         [string]$ColorName = "White"
     )
@@ -285,6 +286,87 @@ function Add-Status {
     $StatusBox.AppendText("[$timestamp] $Message`r`n")
     $StatusBox.ScrollToCaret()
     if ($null -ne $Form) { $Form.Refresh(); [System.Windows.Forms.Application]::DoEvents() }
+}
+#endregion
+
+#region Voice Backup Download
+function Download-VoiceBackupFiles {
+    param([string]$DestinationPath)
+    
+    Write-Log "Downloading voice backup files from GitHub..." -Level Info
+    try {
+        # Clear existing files first to prevent any caching issues
+        if (Test-Path $DestinationPath) {
+            Write-Log "  Clearing existing backup folder..." -Level Info
+            Remove-Item "$DestinationPath\*" -Force -Recurse -ErrorAction SilentlyContinue
+        }
+        EnsureDir $DestinationPath
+        
+        Write-Log "  Fetching file list from GitHub API..." -Level Info
+        try {
+            $response = Invoke-RestMethod -Uri $Script:Config.VoiceBackupAPI -UseBasicParsing -TimeoutSec 30
+        } catch {
+            if ($_.Exception.Response.StatusCode -eq [System.Net.HttpStatusCode]::Forbidden) {
+                throw "GitHub API rate limit exceeded. Please try again later."
+            }
+            throw $_
+        }
+        
+        $response = @($response)
+        if ($response.Count -eq 0) {
+            throw "GitHub repository response is empty."
+        }
+        
+        $fileCount = 0
+        $failedFiles = @()
+        
+        foreach ($file in $response) {
+            if ($file.type -eq "file") {
+                $filePath = Join-Path $DestinationPath $file.name
+                Write-Log "  Downloading: $($file.name)" -Level Info
+                
+                try {
+                    Invoke-WebRequest -Uri $file.download_url -OutFile $filePath -UseBasicParsing -TimeoutSec 30 | Out-Null
+                    
+                    if (-not (Test-Path $filePath)) {
+                        throw "File was not created"
+                    }
+                    
+                    $fileInfo = Get-Item $filePath
+                    if ($fileInfo.Length -eq 0) {
+                        throw "Downloaded file is empty"
+                    }
+                    
+                    # Verify critical files
+                    $ext = [System.IO.Path]::GetExtension($file.name).ToLower()
+                    if ($ext -eq ".node" -or $ext -eq ".dll") {
+                        if ($fileInfo.Length -lt 1024) {
+                            Write-Log "  [!] Warning: $($file.name) seems too small ($($fileInfo.Length) bytes)" -Level Warning
+                        }
+                    }
+                    
+                    $fileCount++
+                } catch {
+                    Write-Log "  [!] Failed to download $($file.name): $($_.Exception.Message)" -Level Warning
+                    $failedFiles += $file.name
+                }
+            }
+        }
+        
+        if ($fileCount -eq 0) {
+            throw "No valid files were downloaded."
+        }
+        
+        if ($failedFiles.Count -gt 0) {
+            Write-Log "  [!] Warning: $($failedFiles.Count) file(s) failed to download" -Level Warning
+        }
+        
+        Write-Log "Downloaded $fileCount voice backup files" -Level Success
+        return $true
+    } catch {
+        Write-Log "Failed to download voice backup files: $($_.Exception.Message)" -Level Error
+        return $false
+    }
 }
 #endregion
 
@@ -635,7 +717,7 @@ function Show-ConfigurationGUI {
 
     $updateLabel = {
         param([int]$m)
-        $valueLabel.Text = if ($m -eq 1) { "1x (Unity Gain)" } else { "${m}x Amplification" }
+        $valueLabel.Text = if ($m -eq 1) { "1x (No Boost - Original Volume)" } else { "${m}x Volume Boost" }
         $valueLabel.ForeColor = [Drawing.Color]::FromArgb($(if ($m -le 2) { "87,242,135" } elseif ($m -le 5) { "254,231,92" } else { "237,66,69" }))
     }
 
@@ -648,7 +730,7 @@ function Show-ConfigurationGUI {
     & $updateLabel $initGain
 
     & $newLabel 30 295 460 20 "1x      2x      3x      4x      5x      6x      7x      8x      9x     10x" (New-Object Drawing.Font("Consolas", 8)) ([Drawing.Color]::FromArgb(150,152,157))
-    & $newLabel 20 320 480 35 "Recommended: 1-2x. Values >5x may cause distortion." (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(185,187,190))
+    & $newLabel 20 320 480 35 "1x = Original volume (no boost). Recommended: 2-3x. Values >5x may distort." (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(185,187,190))
 
     $chk = New-Object Windows.Forms.CheckBox -Property @{
         Location = "20,365"; Size = "480,25"; Text = "Create backup before patching (Recommended)"
@@ -730,6 +812,18 @@ function Initialize-Environment {
     @($Script:Config.TempDir, $Script:Config.BackupDir) | ForEach-Object {
         if ($_ -and -not (Test-Path $_)) { New-Item -ItemType Directory -Path $_ -Force | Out-Null }
     }
+    
+    # Clean up old source files and executables to prevent caching issues
+    $tempDir = $Script:Config.TempDir
+    if (Test-Path $tempDir) {
+        @("patcher.cpp", "amplifier.cpp", "DiscordVoicePatcher.exe", "build.bat", "build.log") | ForEach-Object {
+            $file = Join-Path $tempDir $_
+            if (Test-Path $file) { Remove-Item $file -Force -ErrorAction SilentlyContinue }
+        }
+        # Also remove any timestamped exe files
+        Get-ChildItem $tempDir -Filter "DiscordVoicePatcher_*.exe" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    
     "=== Discord Voice Patcher Log ===`nStarted: $(Get-Date)`nGain: $($Script:Config.AudioGainMultiplier)x`n" | Out-File $Script:Config.LogFile -Force -ErrorAction SilentlyContinue
 }
 
@@ -756,96 +850,339 @@ function Find-Compiler {
 
 #region Source Code
 function Get-AmplifierSourceCode {
-    $m = $Script:Config.AudioGainMultiplier - 2
-@"
-#define MULTIPLIER $m
-struct VS { static constexpr int B=-3553,F=3557,S1=160,S2=164,S3=184,V=1002; };
-inline void Init(int* p) { int* s=p+VS::B; *(s+VS::F)=VS::V; *(int*)((char*)s+VS::S1)=-1; *(int*)((char*)s+VS::S2)=-1; *(int*)((char*)s+VS::S3)=0; }
-inline void Gain(const float* i, float* o, int n, int c) { float g=(float)(c+MULTIPLIER); for(int x=0;x<n;x++) o[x]=i[x]*g; }
-extern "C" void __cdecl hp_cutoff(const float* i,int,float* o,int* m,int l,int c,int,int) { Init(m); Gain(i,o,c*l,c); }
-extern "C" void __cdecl dc_reject(const float* i,float* o,int* m,int l,int c,int) { Init(m); Gain(i,o,c*l,c); }
+    # CRITICAL: When user selects 1x gain, multiplier MUST be -1
+    # Formula: gain = channels + Multiplier = 2 + Multiplier
+    # For 1x gain: 2 + Multiplier = 1, so Multiplier = -1
+    $internalMultiplier = $Script:Config.AudioGainMultiplier - 2
+    
+    # Verify the math
+    if ($Script:Config.AudioGainMultiplier -eq 1 -and $internalMultiplier -ne -1) {
+        Write-Log "ERROR: Multiplier calculation wrong! Expected -1, got $internalMultiplier" -Level Error
+        throw "Multiplier calculation error"
+    }
+    
+    Write-Log "Generating amplifier: Gain=$($Script:Config.AudioGainMultiplier)x, Multiplier=$internalMultiplier" -Level Info
+    Write-Host "    Amplifier: $($Script:Config.AudioGainMultiplier)x gain = Multiplier $internalMultiplier" -ForegroundColor Cyan
+    
+    return @"
+// Gain: $($Script:Config.AudioGainMultiplier)x
+// Multiplier: $internalMultiplier
+// Formula: out = in * (2 + $internalMultiplier) = in * $($Script:Config.AudioGainMultiplier)
+#define Multiplier ($internalMultiplier)
+
+extern "C" void __cdecl hp_cutoff(const float* in, int cutoff_Hz, float* out, int* hp_mem, int len, int channels, int Fs, int arch)
+{
+    int* st = (hp_mem - 3553);
+    *(int*)(st + 3557) = 1002;
+    *(int*)((char*)st + 160) = -1;
+    *(int*)((char*)st + 164) = -1;
+    *(int*)((char*)st + 184) = 0;
+    for (unsigned long i = 0; i < channels * len; i++) out[i] = in[i] * (channels + Multiplier);
+}
+
+extern "C" void __cdecl dc_reject(const float* in, float* out, int* hp_mem, int len, int channels, int Fs)
+{
+    int* st = (hp_mem - 3553);
+    *(int*)(st + 3557) = 1002;
+    *(int*)((char*)st + 160) = -1;
+    *(int*)((char*)st + 164) = -1;
+    *(int*)((char*)st + 184) = 0;
+    for (int i = 0; i < channels * len; i++) out[i] = in[i] * (channels + Multiplier);
+}
 "@
 }
 
 function Get-PatcherSourceCode {
     param([string]$ProcessName = "Discord.exe", [string]$ModuleName = "discord_voice.node")
-    $o = $Script:Config.Offsets; $c = $Script:Config
-@"
+    $offsets = $Script:Config.Offsets
+    $c = $Script:Config
+    
+    return @"
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
-#include <cstdio>
-#include <cstdint>
-#include <cstring>
+#include <iostream>
 #include <string>
-#define SR $($c.SampleRate)
-#define BR $($c.Bitrate)
-#define AG $($c.AudioGainMultiplier)
-extern "C" void dc_reject(const float*,float*,int*,int,int,int);
-extern "C" void hp_cutoff(const float*,int,float*,int*,int,int,int,int);
-namespace O {
-    constexpr uint32_t CAFS=$('0x{0:X}' -f $o.CreateAudioFrameStereo),AEOCS=$('0x{0:X}' -f $o.AudioEncoderOpusConfigSetChannels);
-    constexpr uint32_t MD=$('0x{0:X}' -f $o.MonoDownmixer),ESS1=$('0x{0:X}' -f $o.EmulateStereoSuccess1),ESS2=$('0x{0:X}' -f $o.EmulateStereoSuccess2);
-    constexpr uint32_t EBM=$('0x{0:X}' -f $o.EmulateBitrateModified),SBBV=$('0x{0:X}' -f $o.SetsBitrateBitrateValue),SBBO=$('0x{0:X}' -f $o.SetsBitrateBitwiseOr);
-    constexpr uint32_t E48=$('0x{0:X}' -f $o.Emulate48Khz),HPF=$('0x{0:X}' -f $o.HighPassFilter),HPCF=$('0x{0:X}' -f $o.HighpassCutoffFilter);
-    constexpr uint32_t DCR=$('0x{0:X}' -f $o.DcReject),DMF=$('0x{0:X}' -f $o.DownmixFunc),AEOK=$('0x{0:X}' -f $o.AudioEncoderOpusConfigIsOk),TE=$('0x{0:X}' -f $o.ThrowError);
-    constexpr uint32_t ADJ=0xC00;
+#include <cstdint>
+
+#define SAMPLE_RATE $($c.SampleRate)
+#define BITRATE $($c.Bitrate)
+#define AUDIO_GAIN $($c.AudioGainMultiplier)
+
+extern "C" void dc_reject(const float*, float*, int*, int, int, int);
+extern "C" void hp_cutoff(const float*, int, float*, int*, int, int, int, int);
+
+namespace Offsets {
+    constexpr uint32_t CreateAudioFrameStereo = $('0x{0:X}' -f $offsets.CreateAudioFrameStereo);
+    constexpr uint32_t AudioEncoderOpusConfigSetChannels = $('0x{0:X}' -f $offsets.AudioEncoderOpusConfigSetChannels);
+    constexpr uint32_t MonoDownmixer = $('0x{0:X}' -f $offsets.MonoDownmixer);
+    constexpr uint32_t EmulateStereoSuccess1 = $('0x{0:X}' -f $offsets.EmulateStereoSuccess1);
+    constexpr uint32_t EmulateStereoSuccess2 = $('0x{0:X}' -f $offsets.EmulateStereoSuccess2);
+    constexpr uint32_t EmulateBitrateModified = $('0x{0:X}' -f $offsets.EmulateBitrateModified);
+    constexpr uint32_t SetsBitrateBitrateValue = $('0x{0:X}' -f $offsets.SetsBitrateBitrateValue);
+    constexpr uint32_t SetsBitrateBitwiseOr = $('0x{0:X}' -f $offsets.SetsBitrateBitwiseOr);
+    constexpr uint32_t Emulate48Khz = $('0x{0:X}' -f $offsets.Emulate48Khz);
+    constexpr uint32_t HighPassFilter = $('0x{0:X}' -f $offsets.HighPassFilter);
+    constexpr uint32_t HighpassCutoffFilter = $('0x{0:X}' -f $offsets.HighpassCutoffFilter);
+    constexpr uint32_t DcReject = $('0x{0:X}' -f $offsets.DcReject);
+    constexpr uint32_t DownmixFunc = $('0x{0:X}' -f $offsets.DownmixFunc);
+    constexpr uint32_t AudioEncoderOpusConfigIsOk = $('0x{0:X}' -f $offsets.AudioEncoderOpusConfigIsOk);
+    constexpr uint32_t ThrowError = $('0x{0:X}' -f $offsets.ThrowError);
+    constexpr uint32_t FILE_OFFSET_ADJUSTMENT = 0xC00;
 };
-class P {
-    HANDLE proc; std::string path;
-    void Kill(const char* exeName) { HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); if(s==INVALID_HANDLE_VALUE)return;
-        PROCESSENTRY32 e={sizeof(e)}; if(Process32First(s,&e)) do { if(!strcmp(e.szExeFile,exeName)) { HANDLE p=OpenProcess(PROCESS_TERMINATE,0,e.th32ProcessID); if(p){TerminateProcess(p,0);CloseHandle(p);} } } while(Process32Next(s,&e)); CloseHandle(s); }
-    bool Wait(const char* exeName,int n=10) { for(int i=0;i<n;i++){ HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); if(s==INVALID_HANDLE_VALUE)return 0;
-        PROCESSENTRY32 e={sizeof(e)}; bool f=0; if(Process32First(s,&e)) do { if(!strcmp(e.szExeFile,exeName)){f=1;break;} } while(Process32Next(s,&e)); CloseHandle(s); if(!f)return 1; Sleep(100); } return 0; }
-    bool Patch(void* d) {
-        auto W=[&](uint32_t off,const char* b,size_t l){ memcpy((char*)d+(off-O::ADJ),b,l); };
-        printf("Patching...\n");
-        W(O::ESS1,"\x02",1); W(O::ESS2,"\xEB",1); W(O::CAFS,"\x49\x89\xC5\x90",4); W(O::AEOCS,"\x02",1);
-        W(O::MD,"\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\xE9",13);
-        W(O::EBM,"\x90\xD4\x05",3); W(O::SBBV,"\x90\xD4\x05\x00\x00",5); W(O::SBBO,"\x90\x90\x90",3);
-        W(O::E48,"\x90\x90\x90",3); W(O::HPF,"\x48\xB8\x10\x9E\xD8\xCF\x08\x02\x00\x00\xC3",11);
-        W(O::HPCF,(const char*)hp_cutoff,0x100); W(O::DCR,(const char*)dc_reject,0x1B6);
-        W(O::DMF,"\xC3",1); W(O::AEOK,"\x48\xC7\xC0\x01\x00\x00\x00\xC3",8); W(O::TE,"\xC3",1);
+
+class DiscordPatcher {
+private:
+    std::string modulePath;
+    
+    bool TerminateAllDiscordProcesses() {
+        printf("Closing Discord...\n");
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snapshot == INVALID_HANDLE_VALUE) return false;
+        
+        PROCESSENTRY32 entry = {sizeof(PROCESSENTRY32)};
+        const char* processNames[] = {"Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe", "DiscordDevelopment.exe", "Lightcord.exe", NULL};
+        
+        while (Process32Next(snapshot, &entry)) {
+            for (const char** pn = processNames; *pn != NULL; pn++) {
+                if (strcmp(entry.szExeFile, *pn) == 0) {
+                    HANDLE proc = OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
+                    if (proc) {
+                        TerminateProcess(proc, 0);
+                        CloseHandle(proc);
+                    }
+                }
+            }
+        }
+        CloseHandle(snapshot);
+        return true;
+    }
+    
+    bool WaitForDiscordClose(int maxAttempts = 20) {
+        const char* processNames[] = {"Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe", "DiscordDevelopment.exe", "Lightcord.exe", NULL};
+        
+        for (int i = 0; i < maxAttempts; i++) {
+            HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snapshot == INVALID_HANDLE_VALUE) return false;
+            
+            PROCESSENTRY32 entry = {sizeof(PROCESSENTRY32)};
+            bool found = false;
+            
+            while (Process32Next(snapshot, &entry)) {
+                for (const char** pn = processNames; *pn != NULL; pn++) {
+                    if (strcmp(entry.szExeFile, *pn) == 0) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) break;
+            }
+            CloseHandle(snapshot);
+            if (!found) return true;
+            Sleep(250);
+        }
+        return false;
+    }
+    
+    bool ApplyPatches(void* fileData) {
+        printf("\nApplying patches:\n");
+        
+        auto PatchBytes = [&](uint32_t offset, const char* bytes, size_t len) {
+            memcpy((char*)fileData + (offset - Offsets::FILE_OFFSET_ADJUSTMENT), bytes, len);
+        };
+        
+        printf("  [1/4] Enabling stereo audio...\n");
+        PatchBytes(Offsets::EmulateStereoSuccess1, "\x02", 1);
+        PatchBytes(Offsets::EmulateStereoSuccess2, "\xEB", 1);
+        PatchBytes(Offsets::CreateAudioFrameStereo, "\x49\x89\xC5\x90", 4);
+        PatchBytes(Offsets::AudioEncoderOpusConfigSetChannels, "\x02", 1);
+        PatchBytes(Offsets::MonoDownmixer, "\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\x90\xE9", 13);
+        
+        printf("  [2/4] Setting bitrate to 382kbps...\n");
+        PatchBytes(Offsets::EmulateBitrateModified, "\xF0\xD4\x05", 3);
+        PatchBytes(Offsets::SetsBitrateBitrateValue, "\xF0\xD4\x05\x00\x00", 5);
+        PatchBytes(Offsets::SetsBitrateBitwiseOr, "\x90\x90\x90", 3);
+        
+        printf("  [3/4] Enabling 48kHz sample rate...\n");
+        PatchBytes(Offsets::Emulate48Khz, "\x90\x90\x90", 3);
+        
+        printf("  [4/4] Injecting custom audio processing (%dx gain)...\n", AUDIO_GAIN);
+        PatchBytes(Offsets::HighPassFilter, "\x48\xB8\x10\x9E\xD8\xCF\x08\x02\x00\x00\xC3", 11);
+        PatchBytes(Offsets::HighpassCutoffFilter, (const char*)hp_cutoff, 0x100);
+        PatchBytes(Offsets::DcReject, (const char*)dc_reject, 0x1B6);
+        PatchBytes(Offsets::DownmixFunc, "\xC3", 1);
+        PatchBytes(Offsets::AudioEncoderOpusConfigIsOk, "\x48\xC7\xC0\x01\x00\x00\x00\xC3", 8);
+        PatchBytes(Offsets::ThrowError, "\xC3", 1);
+        
+        printf("  All patches applied successfully!\n");
+        return true;
+    }
+    
+public:
+    DiscordPatcher(const std::string& path) : modulePath(path) {}
+    
+    bool PatchFile() {
+        printf("\n================================================\n");
+        printf("  Discord Voice Quality Patcher v3.0\n");
+        printf("================================================\n");
+        printf("  Target:  %s\n", modulePath.c_str());
+        printf("  Config:  %dkHz, %dkbps, Stereo, %dx gain\n", 
+               SAMPLE_RATE/1000, BITRATE, AUDIO_GAIN);
+        printf("================================================\n\n");
+        
+        // Ensure Discord is closed
+        if (!WaitForDiscordClose(5)) {
+            printf("Closing Discord processes...\n");
+            TerminateAllDiscordProcesses();
+            if (!WaitForDiscordClose(20)) {
+                printf("WARNING: Discord may still be running\n");
+            }
+        }
+        Sleep(500);
+        
+        printf("Opening file for patching...\n");
+        HANDLE file = CreateFileA(modulePath.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                  0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        
+        if (file == INVALID_HANDLE_VALUE) {
+            printf("ERROR: Cannot open file (Error: %lu)\n", GetLastError());
+            printf("Make sure Discord is fully closed and you're running as Administrator\n");
+            return false;
+        }
+        
+        LARGE_INTEGER fileSize;
+        if (!GetFileSizeEx(file, &fileSize)) {
+            printf("ERROR: Cannot get file size\n");
+            CloseHandle(file);
+            return false;
+        }
+        
+        printf("File size: %.2f MB\n", fileSize.QuadPart / (1024.0 * 1024.0));
+        
+        void* fileData = VirtualAlloc(nullptr, fileSize.QuadPart, 
+                                      MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!fileData) {
+            printf("ERROR: Cannot allocate memory\n");
+            CloseHandle(file);
+            return false;
+        }
+        
+        DWORD bytesRead;
+        if (!ReadFile(file, fileData, (DWORD)fileSize.QuadPart, &bytesRead, NULL)) {
+            printf("ERROR: Cannot read file\n");
+            VirtualFree(fileData, 0, MEM_RELEASE);
+            CloseHandle(file);
+            return false;
+        }
+        
+        if (!ApplyPatches(fileData)) {
+            VirtualFree(fileData, 0, MEM_RELEASE);
+            CloseHandle(file);
+            return false;
+        }
+        
+        printf("\nWriting patched file...\n");
+        SetFilePointer(file, 0, NULL, FILE_BEGIN);
+        DWORD bytesWritten;
+        if (!WriteFile(file, fileData, (DWORD)fileSize.QuadPart, &bytesWritten, NULL)) {
+            printf("ERROR: Cannot write file (Error: %lu)\n", GetLastError());
+            VirtualFree(fileData, 0, MEM_RELEASE);
+            CloseHandle(file);
+            return false;
+        }
+        
+        VirtualFree(fileData, 0, MEM_RELEASE);
+        CloseHandle(file);
+        
+        printf("\n================================================\n");
+        printf("  SUCCESS! Patching Complete!\n");
+        printf("================================================\n");
+        printf("  You can now restart Discord\n");
+        printf("  Audio will be %dx amplified\n", AUDIO_GAIN);
+        printf("================================================\n\n");
+        
+        return true;
+    }
+};
+
+int main(int argc, char* argv[]) {
+    SetConsoleTitle("Discord Voice Patcher v3.0");
+    
+    if (argc >= 2) {
+        // Path provided as argument - use directly
+        printf("Discord Voice Quality Patcher v3.0\n");
+        printf("Using provided path: %s\n\n", argv[1]);
+        
+        DiscordPatcher patcher(argv[1]);
+        bool success = patcher.PatchFile();
+        
+        system("pause");
+        return success ? 0 : 1;
+    }
+    
+    // No path provided - search for Discord process
+    printf("Searching for Discord process...\n");
+    
+    const char* processNames[] = {"$ProcessName", "Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe", "DiscordDevelopment.exe", "Lightcord.exe", NULL};
+    
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        printf("ERROR: Cannot create process snapshot\n");
+        system("pause");
         return 1;
     }
-public:
-    P(HANDLE p,const std::string& s):proc(p),path(s){}
-    bool Run(const char* exeName) {
-        printf("\n=== Discord Patcher v2.6.7 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
-        TerminateProcess(proc,0); if(!Wait(exeName)) { Kill(exeName); Sleep(500); }
-        HANDLE f=CreateFileA(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,0,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);
-        if(f==INVALID_HANDLE_VALUE){ printf("ERROR: Can't open file (error %lu)\n", GetLastError()); return 0; }
-        LARGE_INTEGER sz; GetFileSizeEx(f,&sz);
-        void* d=VirtualAlloc(0,sz.QuadPart,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
-        if(!d){ printf("ERROR: Memory allocation failed\n"); CloseHandle(f); return 0; }
-        DWORD r; ReadFile(f,d,sz.QuadPart,&r,0);
-        if(!Patch(d)){ VirtualFree(d,0,MEM_RELEASE); CloseHandle(f); return 0; }
-        SetFilePointer(f,0,0,FILE_BEGIN); DWORD w; WriteFile(f,d,sz.QuadPart,&w,0);
-        VirtualFree(d,0,MEM_RELEASE); CloseHandle(f);
-        printf("\nSUCCESS! Restart Discord.\n"); return 1;
-    }
-};
-const char* PROCESS_NAMES[] = {"$ProcessName", "Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe", "DiscordDevelopment.exe", "Lightcord.exe", NULL};
-int main() {
-    SetConsoleTitle("Discord Patcher v2.6.7");
-    for(const char** pn = PROCESS_NAMES; *pn != NULL; pn++) {
-        HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); 
-        if(s==INVALID_HANDLE_VALUE){ printf("ERROR: Cannot create snapshot\n"); system("pause"); return 1; }
-        PROCESSENTRY32 e={sizeof(e)};
-        if(Process32First(s,&e)) do {
-            if(!strcmp(e.szExeFile,*pn)) {
-                HANDLE p=OpenProcess(PROCESS_ALL_ACCESS,0,e.th32ProcessID); if(!p) continue;
-                HMODULE m[1024]; DWORD n; if(!EnumProcessModules(p,m,sizeof(m),&n)){ CloseHandle(p); continue; }
-                for(DWORD i=0;i<n/sizeof(HMODULE);i++) { char nm[MAX_PATH]; if(GetModuleBaseNameA(p,m[i],nm,MAX_PATH) && !strcmp(nm,"$ModuleName")) {
-                    char mp[MAX_PATH]; GetModuleFileNameExA(p,m[i],mp,MAX_PATH); CloseHandle(s);
-                    P x(p,mp); bool ok=x.Run(*pn); CloseHandle(p); system("pause"); return ok?0:1;
-                }}
-                CloseHandle(p);
+    
+    PROCESSENTRY32 entry = {sizeof(PROCESSENTRY32)};
+    while (Process32Next(snapshot, &entry)) {
+        for (const char** pn = processNames; *pn != NULL; pn++) {
+            if (strcmp(entry.szExeFile, *pn) == 0) {
+                printf("Found Discord (PID: %lu)\n", entry.th32ProcessID);
+                
+                HANDLE process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, entry.th32ProcessID);
+                if (!process) {
+                    printf("ERROR: Cannot open process (run as Administrator)\n");
+                    continue;
+                }
+                
+                HMODULE modules[1024];
+                DWORD bytesNeeded;
+                if (!EnumProcessModules(process, modules, sizeof(modules), &bytesNeeded)) {
+                    printf("ERROR: Cannot enumerate modules\n");
+                    CloseHandle(process);
+                    continue;
+                }
+                
+                printf("Searching for $ModuleName...\n");
+                
+                for (DWORD i = 0; i < bytesNeeded / sizeof(HMODULE); i++) {
+                    char moduleName[MAX_PATH];
+                    if (GetModuleBaseNameA(process, modules[i], moduleName, sizeof(moduleName))) {
+                        if (strcmp(moduleName, "$ModuleName") == 0) {
+                            char modulePath[MAX_PATH];
+                            GetModuleFileNameExA(process, modules[i], modulePath, MAX_PATH);
+                            
+                            CloseHandle(snapshot);
+                            CloseHandle(process);
+                            
+                            DiscordPatcher patcher(modulePath);
+                            bool success = patcher.PatchFile();
+                            
+                            system("pause");
+                            return success ? 0 : 1;
+                        }
+                    }
+                }
+                
+                CloseHandle(process);
             }
-        } while(Process32Next(s,&e));
-        CloseHandle(s);
+        }
     }
-    printf("ERROR: Discord not found. Make sure Discord is running.\n"); system("pause"); return 1;
+    
+    CloseHandle(snapshot);
+    printf("\nERROR: Could not find Discord or $ModuleName\n");
+    printf("Please make sure Discord is running\n\n");
+    system("pause");
+    return 1;
 }
 "@
 }
@@ -880,6 +1217,19 @@ function New-SourceFiles {
         Write-Log "Writing source files to disk..." -Level Info
         [System.IO.File]::WriteAllText($patcher, $patcherCode, [System.Text.Encoding]::ASCII)
         [System.IO.File]::WriteAllText($amp, $ampCode, [System.Text.Encoding]::ASCII)
+        
+        # VERIFICATION: Read back and verify the #define Multiplier line
+        $ampContent = Get-Content $amp -Raw
+        if ($ampContent -match '#define Multiplier (-?\d+)') {
+            $actualMultiplier = $Matches[1]
+            $expectedMultiplier = $Script:Config.AudioGainMultiplier - 2
+            Write-Log "VERIFY: #define Multiplier = $actualMultiplier (expected: $expectedMultiplier)" -Level Info
+            if ([int]$actualMultiplier -ne $expectedMultiplier) {
+                Write-Log "WARNING: Multiplier mismatch! File has $actualMultiplier but expected $expectedMultiplier" -Level Warning
+            }
+        } else {
+            Write-Log "WARNING: Could not find #define Multiplier in generated code!" -Level Warning
+        }
         
         # Verify files exist and have content
         if (-not (Test-Path $patcher)) {
@@ -951,14 +1301,30 @@ cl.exe /EHsc /O2 /std:c++17 ^
 "
                 Set-Content -Path "$($Script:Config.TempDir)\build.bat" -Value $batContent -Encoding ASCII -NoNewline
                 
-                # Run batch file and capture output
-                $output = & cmd.exe /c "`"$($Script:Config.TempDir)\build.bat`"" 2>&1
+                # Run batch file - use Start-Process to avoid stderr triggering ErrorActionPreference
+                $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+                $pinfo.FileName = "cmd.exe"
+                $pinfo.Arguments = "/c `"$($Script:Config.TempDir)\build.bat`""
+                $pinfo.RedirectStandardOutput = $true
+                $pinfo.RedirectStandardError = $true
+                $pinfo.UseShellExecute = $false
+                $pinfo.CreateNoWindow = $true
+                $pinfo.WorkingDirectory = $Script:Config.TempDir
+                
+                $proc = New-Object System.Diagnostics.Process
+                $proc.StartInfo = $pinfo
+                $proc.Start() | Out-Null
+                $stdout = $proc.StandardOutput.ReadToEnd()
+                $stderr = $proc.StandardError.ReadToEnd()
+                $proc.WaitForExit()
+                
+                $output = "$stdout`n$stderr"
                 $output | Out-File $log -Force -Encoding ASCII
                 
                 # Show build log if failed
                 if (-not (Test-Path $exe)) {
                     Write-Host "=== Build Log ===" -ForegroundColor Yellow
-                    $output | ForEach-Object { Write-Host $_ }
+                    Write-Host $output
                 }
             }
             'MinGW' {
@@ -972,7 +1338,12 @@ cl.exe /EHsc /O2 /std:c++17 ^
                 $output | Out-File $log -Force
             }
         }
-        if (Test-Path $exe) { Write-Log "Compilation successful!" -Level Success; return $exe }
+        if (Test-Path $exe) { 
+            $exeInfo = Get-Item $exe
+            Write-Log "Compilation successful! Exe created: $($exeInfo.LastWriteTime)" -Level Success
+            Write-Log "Exe size: $([Math]::Round($exeInfo.Length / 1KB, 1)) KB" -Level Info
+            return $exe 
+        }
         throw "Build failed - exe not created"
     } catch { 
         Write-Log "Compilation failed: $_" -Level Error
@@ -989,12 +1360,26 @@ cl.exe /EHsc /O2 /std:c++17 ^
 function Invoke-PatchClients {
     param(
         [array]$Clients,
-        [hashtable]$Compiler
+        [hashtable]$Compiler,
+        [string]$VoiceBackupPath
     )
     
     if (-not $Clients -or $Clients.Count -eq 0) {
         return @{ Success = 0; Failed = @(); Total = 0 }
     }
+    
+    # Verify voice backup files exist
+    if (-not $VoiceBackupPath -or -not (Test-Path $VoiceBackupPath)) {
+        Write-Log "Voice backup path not found: $VoiceBackupPath" -Level Error
+        return @{ Success = 0; Failed = @($Clients | ForEach-Object { $_.Name.Trim() }); Total = $Clients.Count }
+    }
+    
+    $backupFiles = @(Get-ChildItem $VoiceBackupPath -File -ErrorAction SilentlyContinue)
+    if ($backupFiles.Count -eq 0) {
+        Write-Log "No files found in voice backup path" -Level Error
+        return @{ Success = 0; Failed = @($Clients | ForEach-Object { $_.Name.Trim() }); Total = $Clients.Count }
+    }
+    Write-Log "Voice backup contains $($backupFiles.Count) files" -Level Info
     
     $successCount = 0
     $failedClients = [System.Collections.ArrayList]::new()
@@ -1012,7 +1397,7 @@ function Invoke-PatchClients {
             $version = Get-DiscordAppVersion $appPath
             Write-Log "Version: $version" -Level Info
             
-            # FIX: Force array for voice module search
+            # Find voice module directory
             $voiceModules = @(Get-ChildItem "$appPath\modules" -Filter "discord_voice*" -Directory -ErrorAction SilentlyContinue)
             if ($voiceModules.Count -eq 0) {
                 throw "No discord_voice module found in $appPath\modules"
@@ -1025,34 +1410,50 @@ function Invoke-PatchClients {
                 $voiceModule.FullName
             }
             
+            Write-Log "Voice folder: $voiceFolderPath" -Level Info
+            
+            # Backup existing voice module
+            $voiceNodePath = Join-Path $voiceFolderPath "discord_voice.node"
+            if (Test-Path $voiceNodePath) {
+                if (-not (Backup-VoiceNode $voiceNodePath $ci.Name) -and -not $Script:Config.SkipBackup) {
+                    throw "Backup failed"
+                }
+            }
+            
+            # Delete existing voice module contents
+            Write-Log "Removing old voice module files..." -Level Info
+            if (Test-Path $voiceFolderPath) {
+                Remove-Item "$voiceFolderPath\*" -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+                EnsureDir $voiceFolderPath
+            }
+            
+            # Copy original (unpatched) voice backup files
+            Write-Log "Installing compatible voice module..." -Level Info
+            Copy-Item "$VoiceBackupPath\*" $voiceFolderPath -Recurse -Force
+            
+            # Verify discord_voice.node exists after copy
             $voiceNodePath = Join-Path $voiceFolderPath "discord_voice.node"
             if (-not (Test-Path $voiceNodePath)) {
-                throw "discord_voice.node not found at: $voiceNodePath"
+                throw "discord_voice.node not found after copying backup files"
             }
             
             Write-Log "Voice node: $voiceNodePath" -Level Info
+            Write-Log "File size: $([Math]::Round((Get-Item $voiceNodePath).Length / 1MB, 2)) MB" -Level Info
             
-            if (-not (Test-FileIntegrity $voiceNodePath)) {
-                throw "File integrity check failed"
-            }
-            
-            # Backup
-            if (-not (Backup-VoiceNode $voiceNodePath $ci.Name) -and -not $Script:Config.SkipBackup) {
-                throw "Backup failed"
-            }
-            
-            # Generate source with correct process name
+            # Generate and compile patcher
             $src = New-SourceFiles -ProcessName $ci.Client.Exe
             if (-not $src) { throw "Source generation failed" }
             
             $exe = Invoke-Compilation -Compiler $Compiler -SourceFiles $src
             if (-not $exe) { throw "Compilation failed" }
             
-            Write-Log "Launching patcher..." -Level Info
-            $patchProc = Start-Process -FilePath $exe -Wait -PassThru -NoNewWindow
+            # Run the patcher to apply binary patches
+            Write-Log "Applying binary patches with $($Script:Config.AudioGainMultiplier)x gain setting..." -Level Info
+            $patchProc = Start-Process -FilePath $exe -ArgumentList "`"$voiceNodePath`"" -Wait -PassThru -NoNewWindow
             
             if ($patchProc.ExitCode -eq 0) {
-                Write-Log "Successfully patched $($ci.Name.Trim())!" -Level Success
+                Write-Log "Successfully patched $($ci.Name.Trim()) with $($Script:Config.AudioGainMultiplier)x gain!" -Level Success
                 $successCount++
             } else {
                 throw "Patcher exited with code $($patchProc.ExitCode)"
@@ -1143,6 +1544,15 @@ function Start-Patching {
         $compiler = Find-Compiler
         if (-not $compiler) { Read-Host "Press Enter"; return $false }
         
+        # Download voice backup files
+        Write-Log "Downloading voice backup files from GitHub..." -Level Info
+        $voiceBackupPath = Join-Path $Script:Config.TempDir "VoiceBackup"
+        EnsureDir $voiceBackupPath
+        if (-not (Download-VoiceBackupFiles $voiceBackupPath)) {
+            Write-Log "Failed to download voice backup files" -Level Error
+            Read-Host "Press Enter"; return $false
+        }
+        
         # Stop all Discord processes
         Write-Log "Closing all Discord processes..." -Level Info
         $stopped = Stop-AllDiscordProcesses
@@ -1153,7 +1563,7 @@ function Start-Patching {
         Start-Sleep -Seconds 1
         
         # Patch all clients
-        $result = Invoke-PatchClients -Clients @($uniqueClients) -Compiler $compiler
+        $result = Invoke-PatchClients -Clients @($uniqueClients) -Compiler $compiler -VoiceBackupPath $voiceBackupPath
         
         Write-Host ""
         Write-Log "=== PATCHING COMPLETE ===" -Level Success
@@ -1171,11 +1581,13 @@ function Start-Patching {
     Write-Log "Opening GUI..." -Level Info
     $guiResult = Show-ConfigurationGUI
     if (-not $guiResult) { Write-Log "Cancelled" -Level Warning; return $false }
+    Write-Log "GUI Action: $($guiResult.Action)" -Level Info
     if ($guiResult.Action -eq 'Restore') { return Restore-FromBackup }
     if ($guiResult.Action -notin @('Patch', 'PatchAll')) { Write-Log "Cancelled" -Level Warning; return $false }
     
     $Script:Config.AudioGainMultiplier = $guiResult.Multiplier
     $Script:Config.SkipBackup = $guiResult.SkipBackup
+    Write-Log "GUI Settings: Gain = $($Script:Config.AudioGainMultiplier)x, Skip Backup = $($Script:Config.SkipBackup)" -Level Info
     
     if ($guiResult.Action -eq 'PatchAll') {
         # Set flag and recurse
@@ -1207,6 +1619,15 @@ function Start-Patching {
     $compiler = Find-Compiler
     if (-not $compiler) { Read-Host "Press Enter"; return $false }
     
+    # Download voice backup files
+    Write-Log "Downloading voice backup files from GitHub..." -Level Info
+    $voiceBackupPath = Join-Path $Script:Config.TempDir "VoiceBackup"
+    EnsureDir $voiceBackupPath
+    if (-not (Download-VoiceBackupFiles $voiceBackupPath)) {
+        Write-Log "Failed to download voice backup files" -Level Error
+        Read-Host "Press Enter"; return $false
+    }
+    
     # Stop processes for this client
     Write-Log "Closing Discord processes..." -Level Info
     $stopped = Stop-DiscordProcesses $selectedClientInfo.Processes
@@ -1217,7 +1638,7 @@ function Start-Patching {
     Start-Sleep -Seconds 1
     
     # Patch the single client
-    $result = Invoke-PatchClients -Clients @($targetClient) -Compiler $compiler
+    $result = Invoke-PatchClients -Clients @($targetClient) -Compiler $compiler -VoiceBackupPath $voiceBackupPath
     
     Write-Host ""
     if ($result.Success -gt 0) {
@@ -1241,188 +1662,3 @@ try {
     Read-Host "Press Enter to exit"; exit 1
 }
 #endregion
-
-<# ═══════════════════════════════════════════════════════════════════════════════
-   DEVELOPER DOCUMENTATION
-═══════════════════════════════════════════════════════════════════════════════
-
-WHAT THIS DOES
-  Patches discord_voice.node to enable: Stereo (vs mono), 382kbps (vs 64kbps),
-  48kHz locked (vs negotiated), and configurable gain amplification.
-
-VERSION 2.6.7 CHANGES
-  - Fixed: Missing #include <cstdint> for uint32_t type definition
-  - Fixed: Missing #include <string> for std::string class
-  - These missing headers caused "missing type specifier" and "string is not 
-    a member of std" compilation errors on some Visual Studio versions
-
-VERSION 2.6.6 CHANGES
-  - Fixed: "Unable to find type [System.Windows.Forms.RichTextBox]" error
-  - Fixed: Windows Forms assembly now loaded at script start before function definitions
-
-VERSION 2.6.5 CHANGES
-  - Fixed: MSVC batch file now uses caret (^) line continuation
-  - Fixed: Each source file on its own line to prevent concatenation
-  - Fixed: Added -NoNewline to Set-Content to prevent trailing newline issues
-  - Fixed: Explicit ASCII encoding on all file writes
-
-VERSION 2.6.4 CHANGES
-  - Fixed: Source files not being created - Out-File pipeline was silently failing
-  - Fixed: Now uses [System.IO.File]::WriteAllText() for reliable file creation
-  - Added: Verification that source files exist and have content before compilation
-  - Added: More detailed logging during source file generation
-
-VERSION 2.6.3 CHANGES
-  - Fixed: MSVC quoting issue AGAIN - now uses here-string and explicit file paths
-  - Fixed: Removed nested cmd.exe quote parsing that was causing path concatenation
-  - Improved: Simplified batch file generation and execution
-  - Improved: Better error output when compilation fails
-
-VERSION 2.6.2 CHANGES
-  - Fixed: MSVC compilation quoting bug - source files were joined incorrectly
-    causing "Cannot open source file" error with path containing both files
-  - Fixed: MinGW/Clang argument passing now uses proper array splatting
-  - Improved: Batch file generation uses line array instead of string concat
-  - Added: Auto-update feature - checks GitHub for new versions at startup
-  - Added: -SkipUpdateCheck parameter to bypass update checking
-  - Added: BAT launcher for always running latest version from GitHub
-
-VERSION 2.6.1 CHANGES
-  - Fixed: Empty string parameter error in Write-Log (AllowEmptyString/AllowNull)
-  - Fixed: Array vs single object issues with Get-ChildItem (force @() wrapper)
-  - Fixed: HashSet initialization for older PowerShell versions
-  - Fixed: GUI event handler variable scope issues (use Script: scope)
-  - Fixed: COM object leak in shortcut detection (proper cleanup)
-  - Fixed: C++ Process32First/Next enumeration bug (was using SetFilePointer)
-  - Fixed: Better error messages with GetLastError() codes
-  - Fixed: Locked exe handling during recompilation
-  - Fixed: Null checks throughout for defensive coding
-  - Removed: Unused Get-RealClientPath function
-
-VERSION 2.6 CHANGES
-  - Removed Discord version checks (now works with any version using same offsets)
-  - Added multi-client detection (Stable, Canary, PTB, Development, mods)
-  - Added "Patch All" button to fix all detected clients at once
-  - Added -FixAll and -FixClient CLI parameters
-  - Improved process detection for all Discord variants
-  - GUI shows [*] indicator for installed clients
-  - Unified patching logic via Invoke-PatchClients function
-
-SUPPORTED CLIENTS
-  - Discord Stable, Canary, PTB, Development (Official)
-  - Lightcord, BetterDiscord, Vencord, Equicord, BetterVencord (Mods)
-
-HOW IT WORKS
-  1. PowerShell generates C++ code with your settings
-  2. Compiles to .exe (needs MSVC/MinGW/Clang)
-  3. Exe finds Discord, terminates it, patches the file at specific offsets
-  4. Custom audio functions get injected to replace Discord's filters
-
-FILE LOCATION
-  %LOCALAPPDATA%\Discord\app-X.X.XXXX\modules\discord_voice-X\discord_voice\
-
-CLI USAGE
-  .\DiscordVoicePatcher.ps1                      # Opens GUI for configuration
-  .\DiscordVoicePatcher.ps1 -FixAll              # Patch all detected clients
-  .\DiscordVoicePatcher.ps1 -FixClient "Canary"  # Patch specific client
-  .\DiscordVoicePatcher.ps1 -Restore             # Restore from backup
-  .\DiscordVoicePatcher.ps1 -ListBackups         # Show available backups
-  .\DiscordVoicePatcher.ps1 -SkipUpdateCheck     # Skip checking for updates
-
-BAT LAUNCHER (Recommended)
-  Use DiscordVoicePatcher.bat to always run the latest version from GitHub.
-  The BAT file uses: irm <url> | iex
-  This ensures users always get the newest version without manual updates.
-
-─────────────────────────────────────────────────────────────────────────────────
-OFFSET TABLE - File offset = Memory offset - 0xC00
-─────────────────────────────────────────────────────────────────────────────────
-Offset     Name                    Patch                Purpose
-─────────────────────────────────────────────────────────────────────────────────
-0x520CFB   EmulateStereoSuccess1   02                   Pass stereo check
-0x520D07   EmulateStereoSuccess2   EB                   JMP (skip mono branch)
-0x116C91   CreateAudioFrameStereo  49 89 C5 90          Keep stereo pointer
-0x3A0B64   OpusConfigChannels      02                   2 channels
-0x0D6319   MonoDownmixer           90x12 + E9           NOP out downmix
-0x52115A   BitrateModified         90 D4 05             382000 little-endian
-0x522F81   BitrateValue            90 D4 05 00 00       Same
-0x522F89   BitrateBitwiseOr        90 90 90             Remove cap
-0x520E63   Emulate48Khz            90 90 90             Skip negotiation
-0x52CF70   HighPassFilter          mov rax,addr;ret     Redirect to custom
-0x8D64B0   HighpassCutoff          [hp_cutoff code]     256 bytes injected
-0x8D6690   DcReject                [dc_reject code]     438 bytes injected
-0x8D2820   DownmixFunc             C3                   RET (disable)
-0x3A0E00   OpusConfigIsOk          mov rax,1;ret        Always valid
-0x2B3340   ThrowError              C3                   Suppress errors
-
-─────────────────────────────────────────────────────────────────────────────────
-GAIN FORMULA
-─────────────────────────────────────────────────────────────────────────────────
-  actual_gain = channels + MULTIPLIER = 2 + (UserGain - 2) = UserGain
-  
-  User picks 1x → MULTIPLIER=-1 → 2+(-1)=1x | User picks 5x → MULTIPLIER=3 → 2+3=5x
-
-─────────────────────────────────────────────────────────────────────────────────
-INJECTED FUNCTIONS
-─────────────────────────────────────────────────────────────────────────────────
-hp_cutoff(in, cutoff_Hz, out, state, len, channels, Fs, arch)
-dc_reject(in, out, state, len, channels, Fs)
-
-Both call Init() to set magic values Discord expects, then apply gain:
-  - Offset -3553+3557: set to 1002 (magic flag)
-  - State vars at +160,+164,+184: set to -1,-1,0
-
-─────────────────────────────────────────────────────────────────────────────────
-FINDING OFFSETS FOR NEW DISCORD VERSIONS
-─────────────────────────────────────────────────────────────────────────────────
-Tools: IDA Pro, Ghidra (free), x64dbg
-
-1. Search strings: "opus", "channels", "bitrate", "48000"
-2. Opus init: find "mov ecx, 1" (channel count)
-3. Stereo check: find "cmp eax, 1" + "jne"
-4. Bitrate: find refs to 64000 (0xFA00)
-5. Filters: float ops near "highpass" strings
-6. Convert: file_offset = virtual_address - 0xC00
-
-Pattern search example:
-  $bytes = [IO.File]::ReadAllBytes($path)
-  for ($i=0; $i -lt $bytes.Length-4; $i++) {
-    if ($bytes[$i..($i+3)] -join ',' -eq '131,248,1,117') { "0x$($i.ToString('X'))" }
-  }
-
-─────────────────────────────────────────────────────────────────────────────────
-CUSTOM MODS
-─────────────────────────────────────────────────────────────────────────────────
-Different bitrate (256kbps = 0x3E800 → 00 E8 03):
-  W(O::EBM,"\x00\xE8\x03",3); W(O::SBBV,"\x00\xE8\x03\x00\x00",5);
-
-Compressor (in C++):
-  inline void Compress(float* io, int n, float thresh, float ratio) {
-    for(int i=0;i<n;i++) { float m=fabsf(io[i]);
-      if(m>thresh) io[i]=(io[i]>0?1:-1)*(thresh+(m-thresh)/ratio); }
-  }
-
-Passthrough (no processing):
-  inline void Pass(const float* i, float* o, int n) { memcpy(o,i,n*4); }
-
-─────────────────────────────────────────────────────────────────────────────────
-TROUBLESHOOTING
-─────────────────────────────────────────────────────────────────────────────────
-Crash on startup    → Wrong offsets for your Discord version
-No audio            → Init() magic values wrong
-Distortion          → Gain too high (use 1-2x)
-Compile error       → Need VS C++ workload, MinGW, or Clang
-Access denied       → Close Discord fully, run as admin
-No effect           → Wrong Discord variant (Stable/PTB/Canary are separate)
-Empty string error  → Fixed in v2.6.1
-Cannot open source  → Fixed in v2.6.3 (quoting) and v2.6.6 (file creation)
-
-─────────────────────────────────────────────────────────────────────────────────
-TOOLS
-─────────────────────────────────────────────────────────────────────────────────
-Disassemblers: Ghidra (free), IDA Pro, x64dbg
-Hex editors:   HxD (free), 010 Editor
-Opus codec:    https://opus-codec.org
-PE format:     https://docs.microsoft.com/windows/win32/debug/pe-format
-
-═══════════════════════════════════════════════════════════════════════════════ #>
