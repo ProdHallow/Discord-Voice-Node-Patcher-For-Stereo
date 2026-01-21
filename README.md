@@ -445,12 +445,12 @@ File Offset = Memory Offset - 0xC00
 
 ## 📥 Download
 
-**Latest Release:** [v2.6.2](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases/latest)
+**Latest Release:** [v2.6.2](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases/tag/v2.6.2)
 
-| File | Description |
-|------|-------------|
-| `DiscordVoicePatcher.bat` | **Recommended** — Always runs latest version |
-| `discord_voice_node_patcher_v2.1.ps1` | PowerShell script (for local use) |
+| File | Description | Download |
+|------|-------------|:--------:|
+| `DiscordVoicePatcher.bat` | **Recommended** — Always runs latest version | [⬇️ Download](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases/latest) |
+| `discord_voice_node_patcher_v2.1.ps1` | PowerShell script (for local use) | [⬇️ Download](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases/download/v2.6.2/discord_voice_node_patcher_v2.1.ps1) |
 
 ### Quick Start
 ```batch
