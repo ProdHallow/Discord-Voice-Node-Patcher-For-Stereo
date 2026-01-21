@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Discord Voice Quality Patcher v2.6.1 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
+    Discord Voice Quality Patcher v2.6.2 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
 .PARAMETER AudioGainMultiplier
     Audio gain multiplier (1-10). Default is 1 (unity gain)
 .PARAMETER SkipBackup
@@ -99,7 +99,7 @@ function Write-Log {
 }
 
 function Write-Banner {
-    Write-Host "`n===== Discord Voice Quality Patcher v2.6.1 =====" -ForegroundColor Cyan
+    Write-Host "`n===== Discord Voice Quality Patcher v2.6.2 =====" -ForegroundColor Cyan
     Write-Host "      48kHz | 382kbps | Stereo | Gain Config" -ForegroundColor Cyan
     Write-Host "         Multi-Client Detection Enabled" -ForegroundColor Cyan
     Write-Host "===============================================`n" -ForegroundColor Cyan
@@ -436,7 +436,7 @@ function Show-ConfigurationGUI {
     $Script:GuiInstalledClients = $installedClients
 
     $form = New-Object Windows.Forms.Form -Property @{
-        Text = "Discord Voice Patcher v2.6.1"; ClientSize = "520,520"; StartPosition = "CenterScreen"
+        Text = "Discord Voice Patcher v2.6.2"; ClientSize = "520,520"; StartPosition = "CenterScreen"
         FormBorderStyle = "FixedDialog"; MaximizeBox = $false; MinimizeBox = $false
         BackColor = [Drawing.Color]::FromArgb(44,47,51); ForeColor = [Drawing.Color]::White
     }
@@ -666,7 +666,7 @@ class P {
 public:
     P(HANDLE p,const std::string& s):proc(p),path(s){}
     bool Run(const char* exeName) {
-        printf("\n=== Discord Patcher v2.6.1 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
+        printf("\n=== Discord Patcher v2.6.2 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
         TerminateProcess(proc,0); if(!Wait(exeName)) { Kill(exeName); Sleep(500); }
         HANDLE f=CreateFileA(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,0,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);
         if(f==INVALID_HANDLE_VALUE){ printf("ERROR: Can't open file (error %lu)\n", GetLastError()); return 0; }
@@ -682,7 +682,7 @@ public:
 };
 const char* PROCESS_NAMES[] = {"$ProcessName", "Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe", "DiscordDevelopment.exe", "Lightcord.exe", NULL};
 int main() {
-    SetConsoleTitle("Discord Patcher v2.6.1");
+    SetConsoleTitle("Discord Patcher v2.6.2");
     for(const char** pn = PROCESS_NAMES; *pn != NULL; pn++) {
         HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); 
         if(s==INVALID_HANDLE_VALUE){ printf("ERROR: Cannot create snapshot\n"); system("pause"); return 1; }
@@ -735,18 +735,37 @@ function Invoke-Compilation {
         }
     }
     
+    # FIX: Properly quote each source file individually
+    $quotedSources = ($SourceFiles | ForEach-Object { "`"$_`"" }) -join ' '
+    
     try {
         switch ($Compiler.Type) {
             'MSVC' {
-                $batContent = "@echo off`r`ncall `"$($Compiler.Path)`"`r`ncl.exe /EHsc /O2 /std:c++17 `"$($SourceFiles -join '\" \"')`" /Fe`"$exe`" /link Psapi.lib"
-                $batContent | Out-File "$($Script:Config.TempDir)\build.bat" -Encoding ASCII -Force
-                $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"`"$($Script:Config.TempDir)\build.bat`" > `"$log`" 2>&1`"" -Wait -PassThru -NoNewWindow
+                # Build batch file with properly quoted paths
+                $batLines = @(
+                    '@echo off'
+                    "call `"$($Compiler.Path)`""
+                    "cl.exe /EHsc /O2 /std:c++17 $quotedSources /Fe`"$exe`" /link Psapi.lib"
+                )
+                $batLines -join "`r`n" | Out-File "$($Script:Config.TempDir)\build.bat" -Encoding ASCII -Force
+                
+                # Run the batch file
+                $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+                $pinfo.FileName = "cmd.exe"
+                $pinfo.Arguments = "/c `"$($Script:Config.TempDir)\build.bat`" > `"$log`" 2>&1"
+                $pinfo.UseShellExecute = $false
+                $pinfo.CreateNoWindow = $true
+                $pinfo.WorkingDirectory = $Script:Config.TempDir
+                $proc = [System.Diagnostics.Process]::Start($pinfo)
+                $proc.WaitForExit()
             }
             'MinGW' { 
-                $proc = Start-Process -FilePath "g++" -ArgumentList "-O2 -std=c++17 `"$($SourceFiles -join '\" \"')`" -o `"$exe`" -lpsapi -static" -Wait -PassThru -NoNewWindow -RedirectStandardError $log
+                $args = @('-O2', '-std=c++17') + $SourceFiles + @('-o', $exe, '-lpsapi', '-static')
+                & g++ @args 2>&1 | Out-File $log -Force
             }
             'Clang' { 
-                $proc = Start-Process -FilePath "clang++" -ArgumentList "-O2 -std=c++17 `"$($SourceFiles -join '\" \"')`" -o `"$exe`" -lpsapi" -Wait -PassThru -NoNewWindow -RedirectStandardError $log
+                $args = @('-O2', '-std=c++17') + $SourceFiles + @('-o', $exe, '-lpsapi')
+                & clang++ @args 2>&1 | Out-File $log -Force
             }
         }
         if (Test-Path $exe) { Write-Log "Compilation successful!" -Level Success; return $exe }
@@ -999,6 +1018,12 @@ WHAT THIS DOES
   Patches discord_voice.node to enable: Stereo (vs mono), 382kbps (vs 64kbps),
   48kHz locked (vs negotiated), and configurable gain amplification.
 
+VERSION 2.6.2 CHANGES
+  - Fixed: MSVC compilation quoting bug - source files were joined incorrectly
+    causing "Cannot open source file" error with path containing both files
+  - Fixed: MinGW/Clang argument passing now uses proper array splatting
+  - Improved: Batch file generation uses line array instead of string concat
+
 VERSION 2.6.1 CHANGES
   - Fixed: Empty string parameter error in Write-Log (AllowEmptyString/AllowNull)
   - Fixed: Array vs single object issues with Get-ChildItem (force @() wrapper)
@@ -1121,6 +1146,7 @@ Compile error       → Need VS C++ workload, MinGW, or Clang
 Access denied       → Close Discord fully, run as admin
 No effect           → Wrong Discord variant (Stable/PTB/Canary are separate)
 Empty string error  → Fixed in v2.6.1
+Cannot open source  → Fixed in v2.6.2 (quoting bug)
 
 ─────────────────────────────────────────────────────────────────────────────────
 TOOLS
