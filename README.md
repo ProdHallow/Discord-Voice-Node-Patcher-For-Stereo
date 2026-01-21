@@ -54,6 +54,8 @@
 
 **Always runs the latest version from GitHub — no manual updates needed!**
 
+[⬇️ Download DiscordVoicePatcher.bat](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases/latest)
+
 1. Download `DiscordVoicePatcher.bat`
 2. Double-click to run
 3. Follow the GUI prompts
