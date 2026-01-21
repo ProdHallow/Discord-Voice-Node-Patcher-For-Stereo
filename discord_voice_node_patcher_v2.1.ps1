@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Discord Voice Quality Patcher v2.6.4 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
+    Discord Voice Quality Patcher v2.6.5 - Patches Discord for high-quality audio (48kHz/382kbps/Stereo)
 .PARAMETER AudioGainMultiplier
     Audio gain multiplier (1-10). Default is 1 (unity gain)
 .PARAMETER SkipBackup
@@ -32,7 +32,7 @@ $ErrorActionPreference = "Stop"
 
 # Auto-Update Configuration
 $Script:UPDATE_URL = "https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1"
-$Script:SCRIPT_VERSION = "2.6.4"
+$Script:SCRIPT_VERSION = "2.6.5"
 
 #region Auto-Elevation
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -106,7 +106,7 @@ function Write-Log {
 }
 
 function Write-Banner {
-    Write-Host "`n===== Discord Voice Quality Patcher v2.6.4 =====" -ForegroundColor Cyan
+    Write-Host "`n===== Discord Voice Quality Patcher v2.6.5 =====" -ForegroundColor Cyan
     Write-Host "      48kHz | 382kbps | Stereo | Gain Config" -ForegroundColor Cyan
     Write-Host "         Multi-Client Detection Enabled" -ForegroundColor Cyan
     Write-Host "===============================================`n" -ForegroundColor Cyan
@@ -806,7 +806,7 @@ class P {
 public:
     P(HANDLE p,const std::string& s):proc(p),path(s){}
     bool Run(const char* exeName) {
-        printf("\n=== Discord Patcher v2.6.4 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
+        printf("\n=== Discord Patcher v2.6.5 ===\nTarget: %s\nConfig: %dkHz %dkbps %dx gain\n\n",path.c_str(),SR/1000,BR,AG);
         TerminateProcess(proc,0); if(!Wait(exeName)) { Kill(exeName); Sleep(500); }
         HANDLE f=CreateFileA(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,0,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);
         if(f==INVALID_HANDLE_VALUE){ printf("ERROR: Can't open file (error %lu)\n", GetLastError()); return 0; }
@@ -822,7 +822,7 @@ public:
 };
 const char* PROCESS_NAMES[] = {"$ProcessName", "Discord.exe", "DiscordCanary.exe", "DiscordPTB.exe", "DiscordDevelopment.exe", "Lightcord.exe", NULL};
 int main() {
-    SetConsoleTitle("Discord Patcher v2.6.4");
+    SetConsoleTitle("Discord Patcher v2.6.5");
     for(const char** pn = PROCESS_NAMES; *pn != NULL; pn++) {
         HANDLE s=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0); 
         if(s==INVALID_HANDLE_VALUE){ printf("ERROR: Cannot create snapshot\n"); system("pause"); return 1; }
@@ -926,28 +926,31 @@ function Invoke-Compilation {
     try {
         switch ($Compiler.Type) {
             'MSVC' {
-                # Use here-string to avoid all escaping issues
-                # Write each source file explicitly to avoid join/quote problems
+                # Use caret (^) line continuation for clarity and reliability
                 $src1 = $SourceFiles[0]
                 $src2 = $SourceFiles[1]
                 $vcvars = $Compiler.Path
                 
-                $batContent = @"
-@echo off
-call "$vcvars"
+                # Build batch file with each argument on its own line
+                $batContent = "@echo off
+call `"$vcvars`"
 if errorlevel 1 (
     echo ERROR: Failed to initialize Visual Studio environment
     exit /b 1
 )
-cl.exe /EHsc /O2 /std:c++17 "$src1" "$src2" /Fe"$exe" /link Psapi.lib
-"@
-                Set-Content -Path "$($Script:Config.TempDir)\build.bat" -Value $batContent -Encoding ASCII
+cl.exe /EHsc /O2 /std:c++17 ^
+    `"$src1`" ^
+    `"$src2`" ^
+    /Fe`"$exe`" ^
+    /link Psapi.lib
+"
+                Set-Content -Path "$($Script:Config.TempDir)\build.bat" -Value $batContent -Encoding ASCII -NoNewline
                 
                 # Run batch file and capture output
                 $output = & cmd.exe /c "`"$($Script:Config.TempDir)\build.bat`"" 2>&1
-                $output | Out-File $log -Force
+                $output | Out-File $log -Force -Encoding ASCII
                 
-                # Show build log if verbose or failed
+                # Show build log if failed
                 if (-not (Test-Path $exe)) {
                     Write-Host "=== Build Log ===" -ForegroundColor Yellow
                     $output | ForEach-Object { Write-Host $_ }
@@ -1242,6 +1245,12 @@ WHAT THIS DOES
   Patches discord_voice.node to enable: Stereo (vs mono), 382kbps (vs 64kbps),
   48kHz locked (vs negotiated), and configurable gain amplification.
 
+VERSION 2.6.5 CHANGES
+  - Fixed: MSVC batch file now uses caret (^) line continuation
+  - Fixed: Each source file on its own line to prevent concatenation
+  - Fixed: Added -NoNewline to Set-Content to prevent trailing newline issues
+  - Fixed: Explicit ASCII encoding on all file writes
+
 VERSION 2.6.4 CHANGES
   - Fixed: Source files not being created - Out-File pipeline was silently failing
   - Fixed: Now uses [System.IO.File]::WriteAllText() for reliable file creation
@@ -1391,7 +1400,7 @@ Compile error       → Need VS C++ workload, MinGW, or Clang
 Access denied       → Close Discord fully, run as admin
 No effect           → Wrong Discord variant (Stable/PTB/Canary are separate)
 Empty string error  → Fixed in v2.6.1
-Cannot open source  → Fixed in v2.6.3 (quoting) and v2.6.4 (file creation)
+Cannot open source  → Fixed in v2.6.3 (quoting) and v2.6.5 (file creation)
 
 ─────────────────────────────────────────────────────────────────────────────────
 TOOLS
