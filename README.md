@@ -1,26 +1,27 @@
 # 🎙️ Discord Voice Node Patcher For Stereo
 
-**Studio-grade audio quality for Discord with configurable gain control.**
+**Studio-grade audio quality for Discord with configurable gain control and multi-client support.**
 
-![Version](https://img.shields.io/badge/Version-2.5-5865F2?style=flat-square)
+![Version](https://img.shields.io/badge/Version-2.6.2-5865F2?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-5391FE?style=flat-square)
-![Discord](https://img.shields.io/badge/Discord-v9219-7289DA?style=flat-square)
+![Discord](https://img.shields.io/badge/Discord-All_Clients-7289DA?style=flat-square)
 
 ---
 
-## 🆕 What's New in v2.5
+## 🆕 What's New in v2.6.2
 
 > [!TIP]
-> **No voice channel required!** Disk-based fallback automatically finds `discord_voice.node` even when Discord isn't in a voice channel. Plus all the features from v2.1: Modern GUI, 1x-10x gain control, 48kHz sampling, and 382kbps bitrate.
+> **Auto-updates & Multi-Client Support!** Use the BAT launcher to always run the latest version. Patch all your Discord clients (Stable, Canary, PTB, mods) with a single click using "Patch All"!
 
-### v2.5 Improvements
+### v2.6.x Improvements
 
-✨ **Disk-Based Fallback** — Automatically finds `discord_voice.node` without joining voice channels  
-✨ **Smart Detection** — Searches all Discord variants (Stable, PTB, Canary, Development)  
-✨ **Auto-Elevation** — Automatically requests admin privileges when needed  
-✨ **Enhanced Restore** — Improved backup management with interactive restore menu  
-✨ **Better Logging** — More detailed operation logs for troubleshooting
+✨ **Multi-Client Detection** — Automatically finds all installed Discord variants  
+✨ **Patch All Button** — Fix every detected client with one click  
+✨ **Auto-Update System** — Checks GitHub for new versions at startup  
+✨ **BAT Launcher** — Always runs the latest version from GitHub  
+✨ **CLI Batch Mode** — `-FixAll` and `-FixClient` parameters for automation  
+✨ **Bug Fixes** — Fixed compilation errors, empty string issues, and more
 
 | Feature | Before | After |
 |---------|:------:|:-----:|
@@ -28,49 +29,56 @@
 | **Bitrate** | ~64 kbps | **382 kbps** ✨ |
 | **Channels** | Mono (downmixed) | **True Stereo** ✨ |
 | **Gain Control** | Fixed | **1x-10x Adjustable** ✨ |
-| **Detection** | Requires voice channel | **Disk-based fallback** 🆕 |
+| **Client Support** | Single | **All Clients** 🆕 |
+| **Updates** | Manual | **Auto-Update** 🆕 |
+
+### Supported Discord Clients
+
+| Client | Type | Status |
+|--------|------|:------:|
+| Discord Stable | Official | ✅ |
+| Discord Canary | Official | ✅ |
+| Discord PTB | Official | ✅ |
+| Discord Development | Official | ✅ |
+| Lightcord | Mod | ✅ |
+| BetterDiscord | Mod | ✅ |
+| Vencord | Mod | ✅ |
+| Equicord | Mod | ✅ |
+| BetterVencord | Mod | ✅ |
 
 ---
 
 ## 🚀 Quick Install
 
-**Step 1: Install a C++ Compiler**
+### Method 1: BAT Launcher (Recommended)
 
-Choose one (Visual Studio recommended):
-- [Visual Studio](https://visualstudio.microsoft.com/downloads/) — Install "Desktop development with C++"
+**Always runs the latest version from GitHub — no manual updates needed!**
+
+1. Download `DiscordVoicePatcher.bat`
+2. Double-click to run
+3. Follow the GUI prompts
+
+```batch
+:: What the BAT does:
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1 | iex"
+```
+
+### Method 2: Direct PowerShell
+
+```powershell
+# One-liner (always latest)
+irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1 | iex
+
+# Or download and run locally
+.\discord_voice_node_patcher_v2.1.ps1
+```
+
+### Prerequisites
+
+**C++ Compiler Required** — Choose one:
+- [Visual Studio](https://visualstudio.microsoft.com/downloads/) — Install "Desktop development with C++" (Recommended)
 - [MinGW-w64](https://www.mingw-w64.org/downloads/)
 - [LLVM/Clang](https://releases.llvm.org/download.html)
-
-**Step 2: Run the Patcher**
-
-```powershell
-# Right-click PowerShell → "Run as Administrator" (or just run it - auto-elevates!)
-.\DiscordVoicePatcher_v2_5.ps1
-```
-
-<details>
-<summary><strong>Command Line Options (Advanced)</strong></summary>
-
-```powershell
-# Patch with GUI (auto-elevates if needed)
-.\DiscordVoicePatcher_v2_5.ps1
-
-# Command line with 3x gain, no GUI
-.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 3
-
-# Unity gain (no amplification)
-.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 1
-
-# High gain, skip backup (not recommended)
-.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 5 -SkipBackup
-
-# Restore from most recent backup
-.\DiscordVoicePatcher_v2_5.ps1 -Restore
-
-# List all available backups
-.\DiscordVoicePatcher_v2_5.ps1 -ListBackups
-```
-</details>
 
 ---
 
@@ -80,7 +88,7 @@ Choose one (Visual Studio recommended):
 |-----------|-------------|
 | **Operating System** | Windows 10/11 (64-bit) |
 | **PowerShell** | 5.1 or higher |
-| **Discord Version** | v9219 (Stable) |
+| **Discord** | Any supported client (see list above) |
 | **Permissions** | Administrator (auto-requests if needed) |
 | **Compiler** | MSVC / MinGW / Clang |
 
@@ -94,11 +102,17 @@ Choose one (Visual Studio recommended):
 - 🎧 **True Stereo Output** — Full stereo separation, no downmixing
 - 🎚️ **1x-10x Gain Control** — Adjustable amplification with GUI
 
-### Smart Detection (NEW in v2.5)
-- 🔍 **Disk-Based Fallback** — Finds `discord_voice.node` without voice channel
-- 🔄 **Multi-Variant Support** — Detects Stable, PTB, Canary, and Development
-- 📂 **Intelligent Search** — Automatically finds newest Discord version
-- ⚡ **Auto-Elevation** — Requests admin privileges when needed
+### Multi-Client Support (NEW in v2.6)
+- 🔍 **Auto-Detection** — Finds all installed Discord clients automatically
+- 🎯 **Patch All** — Fix every client with a single click
+- 📋 **Client List** — Shows installed status with `[*]` indicators
+- 🔄 **Smart Deduplication** — Won't patch the same installation twice
+
+### Auto-Update System (NEW in v2.6.2)
+- 🔄 **Version Check** — Compares local script with GitHub on startup
+- 📥 **One-Click Update** — Automatically downloads and applies updates
+- 🚀 **BAT Launcher** — Always runs latest version from GitHub
+- ⏭️ **Skip Option** — Use `-SkipUpdateCheck` to bypass
 
 ### Reliability
 - 🛡️ **Automatic Backups** — Timestamped backups before patching
@@ -117,6 +131,18 @@ Choose one (Visual Studio recommended):
 <details>
 <summary><h2>🎛️ GUI Interface</h2></summary>
 
+### Main Window Features
+
+- **Client Dropdown** — Select from all Discord variants
+  - `[*]` = Installed
+  - `[ ]` = Not detected
+- **Gain Slider** — Adjust amplification from 1x to 10x
+- **Backup Checkbox** — Toggle automatic backup creation
+- **Patch Button** — Patch selected client
+- **Patch All Button** — Patch ALL detected clients at once
+- **Restore Button** — Restore from backup
+- **Cancel Button** — Exit without changes
+
 ### Gain Multiplier Guide
 
 | Multiplier | Use Case | Safety |
@@ -127,15 +153,6 @@ Choose one (Visual Studio recommended):
 | **5x** | High amplification | ![Warning](https://img.shields.io/badge/-Warning-ED4245?style=flat-square) |
 | **10x** | Maximum amplification | ![Danger](https://img.shields.io/badge/-Danger-ED4245?style=flat-square) |
 
-### GUI Elements
-
-- **Slider Control** — Smooth 1x to 10x gain adjustment
-- **Live Preview** — See current multiplier in real-time
-- **Color Coding** — Green (safe), Yellow (moderate), Red (high risk)
-- **Backup Option** — Toggle automatic backup creation
-- **Patch Button** — Apply settings and patch Discord
-- **Cancel Button** — Exit without changes
-
 </details>
 
 <details>
@@ -145,30 +162,48 @@ Choose one (Visual Studio recommended):
 |-----------|------|---------|-------------|
 | `-AudioGainMultiplier` | Int (1-10) | 1 | Audio amplification factor |
 | `-SkipBackup` | Switch | False | Skip backup creation |
-| `-NoGUI` | Switch | False | Run without GUI |
-| `-Restore` | Switch | False | Restore from most recent backup |
+| `-Restore` | Switch | False | Restore from backup |
 | `-ListBackups` | Switch | False | List all available backups |
+| `-FixAll` | Switch | False | **Patch ALL detected clients (CLI mode)** |
+| `-FixClient` | String | — | **Patch specific client by name pattern** |
+| `-SkipUpdateCheck` | Switch | False | **Skip checking for script updates** |
 
 ### Examples
 
 ```powershell
-# Safe default (2x gain with backup)
-.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 2
+# Open GUI (default)
+.\discord_voice_node_patcher_v2.1.ps1
 
-# Maximum quality (unity gain, no amplification)
-.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 1
+# Patch ALL detected clients (no GUI)
+.\discord_voice_node_patcher_v2.1.ps1 -FixAll
 
-# High gain for quiet sources
-.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 5
+# Patch only Canary
+.\discord_voice_node_patcher_v2.1.ps1 -FixClient "Canary"
 
-# Quick patch (skip backup)
-.\DiscordVoicePatcher_v2_5.ps1 -NoGUI -AudioGainMultiplier 3 -SkipBackup
+# Patch all with 3x gain
+.\discord_voice_node_patcher_v2.1.ps1 -FixAll -AudioGainMultiplier 3
+
+# Quick patch without update check
+.\discord_voice_node_patcher_v2.1.ps1 -FixAll -SkipUpdateCheck
 
 # Restore from backup
-.\DiscordVoicePatcher_v2_5.ps1 -Restore
+.\discord_voice_node_patcher_v2.1.ps1 -Restore
 
 # View all backups
-.\DiscordVoicePatcher_v2_5.ps1 -ListBackups
+.\discord_voice_node_patcher_v2.1.ps1 -ListBackups
+```
+
+### Automation Examples
+
+```powershell
+# Silent patch all clients (for scheduled tasks)
+.\discord_voice_node_patcher_v2.1.ps1 -FixAll -SkipUpdateCheck
+
+# Patch specific mod client
+.\discord_voice_node_patcher_v2.1.ps1 -FixClient "Vencord"
+
+# Patch official clients only
+.\discord_voice_node_patcher_v2.1.ps1 -FixClient "Official"
 ```
 
 </details>
@@ -186,51 +221,46 @@ Choose one (Visual Studio recommended):
 
 ### Discord Installation Paths (Auto-Detected)
 
-The patcher automatically searches these locations:
-- `%LOCALAPPDATA%\Discord` — Discord Stable
-- `%LOCALAPPDATA%\DiscordPTB` — Public Test Build
-- `%LOCALAPPDATA%\DiscordCanary` — Canary Build
-- `%LOCALAPPDATA%\DiscordDevelopment` — Development Build
+| Client | Path |
+|--------|------|
+| Discord Stable | `%LOCALAPPDATA%\Discord` |
+| Discord Canary | `%LOCALAPPDATA%\DiscordCanary` |
+| Discord PTB | `%LOCALAPPDATA%\DiscordPTB` |
+| Discord Development | `%LOCALAPPDATA%\DiscordDevelopment` |
+| Lightcord | `%LOCALAPPDATA%\Lightcord` |
+| Vencord | `%LOCALAPPDATA%\Vencord` (fallback: Discord) |
+| Equicord | `%LOCALAPPDATA%\Equicord` (fallback: Discord) |
+| BetterVencord | `%LOCALAPPDATA%\BetterVencord` (fallback: Discord) |
 
 ### Backup Naming Format
 ```
-discord_voice.node.YYYYMMDD_HHMMSS.backup
+discord_voice.node.<ClientName>.<Timestamp>.backup
 ```
 
-Example: `discord_voice.node.20250113_143022.backup`
+Example: `discord_voice.node.Discord_Stable_Official.20250120_143022.backup`
 
 </details>
 
 <details>
 <summary><h2>🔧 How It Works</h2></summary>
 
-### Detection Flow (NEW in v2.5)
+### Multi-Client Detection Flow
 
 ```mermaid
 graph TD
-    A[Start Patcher] --> B{Discord Running?}
-    B -->|Yes| C{Voice Module Loaded?}
-    B -->|No| D[Disk Search]
-    C -->|Yes| E[Use Memory Path]
-    C -->|No| D
-    D --> F{Node Found?}
-    F -->|Yes| G[Patch Node]
-    F -->|No| H[Show Error]
-    E --> G
-    G --> I[Create Backup]
-    I --> J[Apply Patches]
-    J --> K[Restart Discord]
-```
-
-### Patching Process
-
-```mermaid
-graph LR
-    A[Detect Discord] --> B[Generate C++ Code]
-    B --> C[Compile Patcher]
-    C --> D[Create Backup]
-    D --> E[Apply Patches]
-    E --> F[Restart Discord]
+    A[Start Patcher] --> B[Scan All Client Paths]
+    B --> C[Check Running Processes]
+    C --> D[Check Shortcuts]
+    D --> E[Deduplicate by AppPath]
+    E --> F{User Choice}
+    F -->|Patch One| G[Patch Selected Client]
+    F -->|Patch All| H[Loop Through All Clients]
+    H --> G
+    G --> I[Stop Discord Processes]
+    I --> J[Create Backup]
+    J --> K[Compile C++ Patcher]
+    K --> L[Apply Binary Patches]
+    L --> M[Done - Restart Discord]
 ```
 
 ### What Gets Modified
@@ -263,11 +293,13 @@ Examples:
 
 | Issue | Solution |
 |-------|----------|
-| ❌ "Voice node not found" | Discord will be searched on disk automatically (no voice channel needed!) |
+| ❌ "Cannot open source file" | Fixed in v2.6.2 — update to latest version |
+| ❌ "Empty string parameter" | Fixed in v2.6.1 — update to latest version |
 | ❌ No compiler found | Install Visual Studio with C++ workload |
-| ❌ Access denied | Script will auto-request admin elevation |
+| ❌ "No Discord clients found" | Run Discord once, or check installation paths |
+| ❌ Access denied | Script auto-requests admin elevation |
 | ❌ Audio distorted | Lower gain multiplier (use 1x-2x) |
-| ❌ Version mismatch | Verify Discord is v9219 |
+| ❌ Patch has no effect | Make sure you patched the right client variant |
 
 ### View Logs
 ```powershell
@@ -277,71 +309,55 @@ notepad "$env:TEMP\DiscordVoicePatcher\patcher.log"
 ### Restore Backup
 ```powershell
 # Interactive restore (recommended)
-.\DiscordVoicePatcher_v2_5.ps1 -Restore
+.\discord_voice_node_patcher_v2.1.ps1 -Restore
 
 # List all backups
-.\DiscordVoicePatcher_v2_5.ps1 -ListBackups
-
-# Manual restore
-Copy-Item "$env:TEMP\DiscordVoicePatcher\Backups\discord_voice.node.*.backup" `
-          "C:\Path\To\Discord\discord_voice.node"
+.\discord_voice_node_patcher_v2.1.ps1 -ListBackups
 ```
 
-### No Voice Channel Required! 🎉
-
-**v2.5 eliminates the need to join a voice channel first.** The patcher now:
-1. Tries to find the voice module in Discord's running process
-2. If not loaded in memory, automatically searches Discord installation directories
-3. Intelligently locates the newest Discord version
-4. Works with Stable, PTB, Canary, and Development builds
+### Force Update
+If you're having issues, use the BAT launcher to ensure you're on the latest version:
+```batch
+DiscordVoicePatcher.bat
+```
 
 </details>
 
 <details>
 <summary><h2>🔬 Technical Details</h2></summary>
 
-### Memory Offsets (Discord v9219)
+### Memory Offsets
 
 ```cpp
 // Stereo Configuration
 CreateAudioFrameStereo            = 0x116C91
 AudioEncoderOpusConfigSetChannels = 0x3A0B64
 MonoDownmixer                     = 0xD6319
+EmulateStereoSuccess1             = 0x520CFB
+EmulateStereoSuccess2             = 0x520D07
 
 // Bitrate Configuration  
 EmulateBitrateModified            = 0x52115A
 SetsBitrateBitrateValue           = 0x522F81
+SetsBitrateBitwiseOr              = 0x522F89
 
 // Sample Rate
 Emulate48Khz                      = 0x520E63
 
 // Audio Processing
 HighPassFilter                    = 0x52CF70
+HighpassCutoffFilter              = 0x8D64B0
 DcReject                          = 0x8D6690
+DownmixFunc                       = 0x8D2820
+
+// Validation
+AudioEncoderOpusConfigIsOk        = 0x3A0E00
+ThrowError                        = 0x2B3340
 ```
 
-### Patching Techniques
-
-| Technique | Purpose |
-|-----------|---------|
-| **NOP Instructions** | Disable unwanted code (0x90) |
-| **Jump Redirects** | Change conditional to unconditional jumps |
-| **Function Injection** | Insert custom audio processing |
-| **Direct Modification** | Overwrite specific instruction bytes |
-
-### Disk Search Algorithm (NEW)
-
-```powershell
-# Searches in order:
-1. $env:LOCALAPPDATA\Discord\app-*/modules/discord_voice-*/discord_voice/discord_voice.node
-2. $env:LOCALAPPDATA\DiscordPTB\app-*/...
-3. $env:LOCALAPPDATA\DiscordCanary\app-*/...
-4. $env:LOCALAPPDATA\DiscordDevelopment\app-*/...
-
-# Sorting:
-- App folders: Newest version first (semantic versioning)
-- Voice modules: Highest version number first
-- Checks nested folder structure then flat structure
+### Offset Conversion
+```
+File Offset = Memory Offset - 0xC00
 ```
 
 </details>
@@ -349,36 +365,49 @@ DcReject                          = 0x8D6690
 <details>
 <summary><h2>📋 Changelog</h2></summary>
 
-### v2.5 (2025-01-13) — Current Release
-- ✨ **Disk-based fallback** — No voice channel required to find discord_voice.node
-- ✨ **Auto-elevation** — Automatically requests admin privileges when needed
-- ✨ **Multi-variant detection** — Supports Stable, PTB, Canary, Development
-- ✨ **Interactive restore menu** — Choose from list of backups
-- ✨ **Config persistence** — Remembers last used settings
-- 🔧 Enhanced logging with better error messages
-- 🔧 Improved backup management (max 10 backups)
-- 📚 Updated documentation with new features
+### v2.6.2 (2025-01-20) — Current Release
+- 🐛 **Fixed** MSVC compilation quoting bug ("Cannot open source file")
+- 🐛 **Fixed** MinGW/Clang argument passing (proper array splatting)
+- ✨ **Added** Auto-update system with GitHub version checking
+- ✨ **Added** `-SkipUpdateCheck` parameter
+- ✨ **Added** BAT launcher for always-latest execution
+- 🔧 Improved batch file generation
 
-### v2.4 (Previous)
-- 🔧 Code cleanup and optimization
-- 🔧 Preserved original patching logic
-- 🐛 Bug fixes and stability improvements
+### v2.6.1 (2025-01-20)
+- 🐛 **Fixed** Empty string parameter error in Write-Log
+- 🐛 **Fixed** Array vs single object issues with Get-ChildItem
+- 🐛 **Fixed** HashSet initialization for older PowerShell versions
+- 🐛 **Fixed** GUI event handler variable scope issues
+- 🐛 **Fixed** COM object leak in shortcut detection
+- 🐛 **Fixed** C++ Process32First/Next enumeration bug
+- 🔧 Added null checks throughout for defensive coding
+
+### v2.6.0 (2025-01-20)
+- ✨ **Added** Multi-client detection (9 Discord variants supported)
+- ✨ **Added** "Patch All" button to fix all clients at once
+- ✨ **Added** `-FixAll` CLI parameter for batch patching
+- ✨ **Added** `-FixClient` CLI parameter for specific client
+- ✨ **Added** Client installation indicators `[*]` in GUI
+- 🔧 Removed Discord version checks (universal compatibility)
+- 🔧 Unified patching logic via Invoke-PatchClients function
+
+### v2.5 (2025-01-13)
+- ✨ Disk-based fallback — No voice channel required
+- ✨ Auto-elevation — Requests admin privileges automatically
+- ✨ Multi-variant detection — Stable, PTB, Canary, Development
+- ✨ Interactive restore menu
+- 🔧 Config persistence
 
 ### v2.1
 - ✨ Modern GUI with Discord theming
 - ✨ Configurable gain multiplier (1x-10x)
 - ✨ Command-line parameter support
-- 🐛 Fixed multiplier calculation for stereo
-- 🐛 Fixed GUI layout overlapping
-- 🔧 Improved error handling and logging
 - 🔧 Automatic backup system
-- 📚 Comprehensive documentation
 
 ### v1.0 (Initial)
 - 🎵 48kHz sample rate support
 - 🎵 382kbps bitrate increase
 - 🎵 True stereo output
-- 🎵 Fixed 9dB gain
 
 </details>
 
@@ -387,18 +416,18 @@ DcReject                          = 0x8D6690
 ## 🛡️ Safety Information
 
 > [!WARNING]
-> **Discord Updates** — Discord updates will overwrite the patched file. You'll need to re-patch after major Discord updates.
+> **Discord Updates** — Discord updates will overwrite the patched file. Re-run the patcher after Discord updates. Use the BAT launcher to always have the latest patcher version!
 
 > [!TIP]
-> **Backups are automatic** — The patcher creates timestamped backups before every modification. You can always restore the original file using `.\DiscordVoicePatcher_v2_5.ps1 -Restore`
+> **Backups are automatic** — The patcher creates timestamped backups before every modification. Restore anytime with `-Restore`
 
 ### Best Practices
 
+- ✅ Use the BAT launcher for automatic updates
 - ✅ Always create backups (don't use `-SkipBackup`)
 - ✅ Start with low gain (1x-2x) and increase gradually
+- ✅ Use "Patch All" to fix all clients at once
 - ✅ Keep logs for troubleshooting
-- ✅ Verify Discord version before patching
-- ✅ Use `-Restore` to revert if issues occur
 - ⚠️ Test after patching before important calls
 - ⚠️ Be cautious with high gain (5x+) — risk of clipping
 
@@ -408,7 +437,7 @@ DcReject                          = 0x8D6690
 
 **Original Source Code & Offsets** — Cypher · Oracle  
 **Script Architecture & GUI** — Claude (Anthropic)  
-**v2.5 Enhancements** — ProdHallow
+**v2.5+ Enhancements & Multi-Client Support** — ProdHallow
 
 > Special thanks to **Cypher** and **Oracle** for discovering the memory offsets and creating the original patching methodology that made this tool possible.
 
@@ -416,9 +445,18 @@ DcReject                          = 0x8D6690
 
 ## 📥 Download
 
-**Latest Release:** [v2.5](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases/tag/v2.5)
+**Latest Release:** [v2.6.2](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases/latest)
 
-Download `DiscordVoicePatcher_v2_5.ps1` and run with administrator privileges!
+| File | Description |
+|------|-------------|
+| `DiscordVoicePatcher.bat` | **Recommended** — Always runs latest version |
+| `discord_voice_node_patcher_v2.1.ps1` | PowerShell script (for local use) |
+
+### Quick Start
+```batch
+:: Download and run the BAT file, or use this one-liner in PowerShell:
+irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1 | iex
+```
 
 ---
 
