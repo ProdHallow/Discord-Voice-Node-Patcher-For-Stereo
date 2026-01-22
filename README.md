@@ -2,7 +2,7 @@
 
 **Studio-grade audio for Discord: 48kHz • 382kbps • True Stereo**
 
-![Version](https://img.shields.io/badge/Version-2.6.2-5865F2?style=flat-square)
+![Version](https://img.shields.io/badge/Version-3.0-5865F2?style=flat-square)
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square)
 ![PowerShell](https://img.shields.io/badge/PowerShell-5.1+-5391FE?style=flat-square)
 
@@ -21,7 +21,7 @@ Just download and double-click. Always runs the latest version.
 ### Option 2: One-Liner (No Download)
 
 ```powershell
-irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1 | iex
+irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v3.ps1 | iex
 ```
 
 Paste into PowerShell and press Enter.
@@ -53,6 +53,17 @@ Works with: **Discord Stable, Canary, PTB, Development, Vencord, BetterDiscord, 
 
 ---
 
+## 🆕 What's New in v3.0
+
+| Feature | Description |
+|---------|-------------|
+| **Auto Voice Module Download** | Downloads compatible voice files from GitHub — no more version mismatch errors |
+| **Universal Compatibility** | Works regardless of Discord version installed |
+| **Auto-Relaunch** | Checkbox to automatically restart Discord after patching |
+| **Improved Slider** | Gain slider now responds to click, drag, and keyboard input |
+
+---
+
 <details>
 <summary><h2>📖 Full Documentation</h2></summary>
 
@@ -60,6 +71,7 @@ Works with: **Discord Stable, Canary, PTB, Development, Vencord, BetterDiscord, 
 
 - **Client Dropdown** — Auto-detects all installed Discord variants
 - **Gain Slider** — Adjust volume from 1x to 10x
+- **Auto-Relaunch** — Automatically restart Discord after patching (enabled by default)
 - **Patch All** — Fix every client with one click
 - **Backup/Restore** — Automatic backups before patching
 
@@ -109,7 +121,7 @@ notepad "$env:TEMP\DiscordVoicePatcher\patcher.log"
 
 ### Restore Original
 ```powershell
-irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1 | iex
+irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v3.ps1 | iex
 # Then select "Restore" in the GUI
 ```
 
@@ -118,7 +130,17 @@ irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-
 <details>
 <summary><h2>📋 Changelog</h2></summary>
 
-### v2.6.2 (Current)
+### v3.0 (Current) — Major Release
+- 🚀 **NEW:** Automatic voice module replacement from GitHub
+  - Downloads compatible discord_voice files from ProdHallow/voice-backup
+  - Ensures binary offsets always match (no more version mismatch errors)
+  - Works regardless of Discord version installed
+- 🚀 **NEW:** Auto-relaunch checkbox — automatically restart Discord after patching
+- 🐛 **FIXED:** Gain slider now responds to all input types (click, drag, keyboard)
+- 🐛 **FIXED:** Replaced minified C++ code with clean original code (fixes Discord crash on voice join)
+- ⚠️ **Breaking Change:** Patches are now applied to known-compatible module files rather than arbitrary Discord versions
+
+### v2.6.2
 - 🐛 Fixed MSVC compilation error ("Cannot open source file")
 - ✨ Added auto-update system
 - ✨ Added BAT launcher
@@ -144,13 +166,16 @@ irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-
 <details>
 <summary><h2>🔬 Technical Details</h2></summary>
 
-### How It Works
+### How It Works (v3.0)
 
-1. PowerShell generates C++ patcher code with your settings
-2. Compiles to an executable using your C++ compiler
-3. Patcher finds Discord's `discord_voice.node` file
-4. Applies binary patches at specific memory offsets
-5. Injects custom audio processing functions
+1. Downloads compatible voice module files from GitHub backup repository
+2. Closes Discord processes
+3. Backs up existing voice module (for rollback)
+4. Replaces voice module files with compatible versions
+5. PowerShell generates C++ patcher code with your settings
+6. Compiles to an executable using your C++ compiler
+7. Applies binary patches at specific memory offsets
+8. Optionally relaunches Discord
 
 ### What Gets Patched
 
@@ -188,6 +213,6 @@ irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-
 
 <div align="center">
 
-**[Report Issue](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/issues)** · **[Releases](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases)** · **[Source Code](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/blob/main/discord_voice_node_patcher_v2.1.ps1)**
+**[Report Issue](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/issues)** · **[Releases](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases)** · **[Source Code](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/blob/main/discord_voice_node_patcher_v3.ps1)**
 
 </div>
