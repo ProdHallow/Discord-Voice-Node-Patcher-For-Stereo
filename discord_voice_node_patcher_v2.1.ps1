@@ -62,7 +62,7 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 $Script:GainExplicitlySet = $PSBoundParameters.ContainsKey('AudioGainMultiplier')
 $Script:Config = @{
     SampleRate = 48000; Bitrate = 382; Channels = "Stereo"
-    AudioGainMultiplier = $AudioGainMultiplier; SkipBackup = $SkipBackup.IsPresent
+    AudioGainMultiplier = $AudioGainMultiplier; SkipBackup = $SkipBackup.IsPresent; AutoRelaunch = $true
     ModuleName = "discord_voice.node"
     TempDir = "$env:TEMP\DiscordVoicePatcher"; BackupDir = "$env:TEMP\DiscordVoicePatcher\Backups"
     LogFile = "$env:TEMP\DiscordVoicePatcher\patcher.log"; ConfigFile = "$env:TEMP\DiscordVoicePatcher\config.json"
@@ -129,7 +129,7 @@ function Save-UserConfig {
     try {
         EnsureDir (Split-Path $Script:Config.ConfigFile -Parent)
         @{ LastGainMultiplier = $Script:Config.AudioGainMultiplier; LastBackupEnabled = -not $Script:Config.SkipBackup
-           LastPatchDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss" } | ConvertTo-Json | Out-File $Script:Config.ConfigFile -Force
+           AutoRelaunch = $Script:Config.AutoRelaunch; LastPatchDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss" } | ConvertTo-Json | Out-File $Script:Config.ConfigFile -Force
     } catch { Write-Log "Failed to save config: $_" -Level Warning }
 }
 
@@ -657,7 +657,7 @@ function Show-ConfigurationGUI {
     $Script:GuiInstalledClients = $installedClients
 
     $form = New-Object Windows.Forms.Form -Property @{
-        Text = "Discord Voice Patcher v$Script:SCRIPT_VERSION"; ClientSize = "520,560"; StartPosition = "CenterScreen"
+        Text = "Discord Voice Patcher v$Script:SCRIPT_VERSION"; ClientSize = "520,570"; StartPosition = "CenterScreen"
         FormBorderStyle = "FixedDialog"; MaximizeBox = $false; MinimizeBox = $false
         BackColor = [Drawing.Color]::FromArgb(44,47,51); ForeColor = [Drawing.Color]::White
     }
@@ -718,77 +718,98 @@ function Show-ConfigurationGUI {
     $updateLabel = {
         param([int]$m)
         $valueLabel.Text = if ($m -eq 1) { "1x (No Boost - Original Volume)" } else { "${m}x Volume Boost" }
-        $valueLabel.ForeColor = [Drawing.Color]::FromArgb($(if ($m -le 2) { "87,242,135" } elseif ($m -le 5) { "254,231,92" } else { "237,66,69" }))
+        $valueLabel.ForeColor = if ($m -le 2) { [Drawing.Color]::FromArgb(87,242,135) } elseif ($m -le 5) { [Drawing.Color]::FromArgb(254,231,92) } else { [Drawing.Color]::FromArgb(237,66,69) }
     }
 
-    $slider = New-Object Windows.Forms.TrackBar -Property @{
-        Location = "30,245"; Size = "460,45"; Minimum = 1; Maximum = 10; TickFrequency = 1
-        BackColor = [Drawing.Color]::FromArgb(44,47,51); Value = $initGain
-    }
-    $slider.Add_ValueChanged({ & $updateLabel $slider.Value })
+    # Slider with proper event handling
+    $slider = New-Object Windows.Forms.TrackBar
+    $slider.Location = New-Object Drawing.Point(30, 245)
+    $slider.Size = New-Object Drawing.Size(460, 45)
+    $slider.Minimum = 1
+    $slider.Maximum = 10
+    $slider.TickFrequency = 1
+    $slider.LargeChange = 1
+    $slider.SmallChange = 1
+    $slider.TickStyle = [Windows.Forms.TickStyle]::BottomRight
+    $slider.BackColor = [Drawing.Color]::FromArgb(44,47,51)
+    
+    # Use ValueChanged for all input types (keyboard, mouse click, drag)
+    $slider.Add_ValueChanged({ 
+        & $updateLabel $slider.Value 
+    })
+    
+    # Set initial value AFTER adding event handler
+    $slider.Value = $initGain
     $form.Controls.Add($slider)
     & $updateLabel $initGain
 
-    & $newLabel 30 295 460 20 "1x      2x      3x      4x      5x      6x      7x      8x      9x     10x" (New-Object Drawing.Font("Consolas", 8)) ([Drawing.Color]::FromArgb(150,152,157))
-    & $newLabel 20 320 480 35 "1x = Original volume (no boost). Recommended: 2-3x. Values >5x may distort." (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(185,187,190))
+    & $newLabel 30 290 460 20 "1x      2x      3x      4x      5x      6x      7x      8x      9x     10x" (New-Object Drawing.Font("Consolas", 8)) ([Drawing.Color]::FromArgb(150,152,157))
+    & $newLabel 20 315 480 30 "1x = Original volume (no boost). Recommended: 2-3x. Values >5x may distort." (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(185,187,190))
 
     $chk = New-Object Windows.Forms.CheckBox -Property @{
-        Location = "20,365"; Size = "480,25"; Text = "Create backup before patching (Recommended)"
+        Location = "20,350"; Size = "480,25"; Text = "Create backup before patching (Recommended)"
         Checked = $(if ($prevCfg -and $null -ne $prevCfg.LastBackupEnabled) { $prevCfg.LastBackupEnabled } else { -not $Script:Config.SkipBackup })
         ForeColor = [Drawing.Color]::White; Font = New-Object Drawing.Font("Segoe UI", 9)
     }
     $form.Controls.Add($chk)
+    
+    $autoRelaunchChk = New-Object Windows.Forms.CheckBox -Property @{
+        Location = "20,375"; Size = "480,25"; Text = "Auto-relaunch Discord after patching"
+        Checked = $(if ($prevCfg -and $null -ne $prevCfg.AutoRelaunch) { $prevCfg.AutoRelaunch } else { $true })
+        ForeColor = [Drawing.Color]::White; Font = New-Object Drawing.Font("Segoe UI", 9)
+    }
+    $form.Controls.Add($autoRelaunchChk)
 
     if ($prevCfg -and $prevCfg.LastPatchDate) {
-        & $newLabel 20 395 480 20 "Last: $($prevCfg.LastPatchDate) @ $($prevCfg.LastGainMultiplier)x" (New-Object Drawing.Font("Segoe UI", 8)) ([Drawing.Color]::FromArgb(150,152,157))
+        & $newLabel 20 405 480 20 "Last: $($prevCfg.LastPatchDate) @ $($prevCfg.LastGainMultiplier)x" (New-Object Drawing.Font("Segoe UI", 8)) ([Drawing.Color]::FromArgb(150,152,157))
     }
 
     # Status label for validation messages
-    $statusLabel = & $newLabel 20 420 480 25 "" (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(237,66,69))
+    $statusLabel = & $newLabel 20 430 480 25 "" (New-Object Drawing.Font("Segoe UI", 9)) ([Drawing.Color]::FromArgb(237,66,69))
     
     # Set initial status based on current selection
     if (-not $Script:GuiInstalledIndices.ContainsKey($clientCombo.SelectedIndex)) {
         $statusLabel.Text = "This client is not installed"
     }
 
-    $btnStyle = { param($x, $text, $bg, $bold, $action)
+    $btnStyle = { param($x, $text, $bgR, $bgG, $bgB, $bold, $action)
         $b = New-Object Windows.Forms.Button -Property @{
-            Location = "$x,460"; Size = "115,40"; Text = $text; FlatStyle = "Flat"
-            BackColor = [Drawing.Color]::FromArgb($bg); ForeColor = [Drawing.Color]::White
+            Location = "$x,470"; Size = "115,40"; Text = $text; FlatStyle = "Flat"
+            BackColor = [Drawing.Color]::FromArgb($bgR, $bgG, $bgB); ForeColor = [Drawing.Color]::White
             Font = New-Object Drawing.Font("Segoe UI", 10, $(if ($bold) { [Drawing.FontStyle]::Bold } else { [Drawing.FontStyle]::Regular }))
             Cursor = [Windows.Forms.Cursors]::Hand
         }
         $b.Add_Click($action); $form.Controls.Add($b); $b
     }
 
-    & $btnStyle 20 "Restore" "79,84,92" $false { $form.Tag = @{ Action = 'Restore' }; $form.DialogResult = "Abort"; $form.Close() }
+    & $btnStyle 20 "Restore" 79 84 92 $false { $form.Tag = @{ Action = 'Restore' }; $form.DialogResult = "Abort"; $form.Close() }
     
     # Patch button with validation
-    $patchBtn = & $btnStyle 140 "Patch" "88,101,242" $true {
+    $patchBtn = & $btnStyle 140 "Patch" 88 101 242 $true {
         $selectedIdx = $clientCombo.SelectedIndex
         # FIX: Use script-scoped variable
         if (-not $Script:GuiInstalledIndices.ContainsKey($selectedIdx)) {
             $statusLabel.Text = "Selected client is not installed!"
             return
         }
-        $form.Tag = @{ Action = 'Patch'; Multiplier = $slider.Value; SkipBackup = -not $chk.Checked; ClientIndex = $selectedIdx }
+        $form.Tag = @{ Action = 'Patch'; Multiplier = $slider.Value; SkipBackup = -not $chk.Checked; AutoRelaunch = $autoRelaunchChk.Checked; ClientIndex = $selectedIdx }
         $form.DialogResult = "OK"
         $form.Close()
     }
     
     # Patch All button with validation
-    $patchAllBtn = & $btnStyle 260 "Patch All" "87,158,87" $true {
+    $patchAllBtn = & $btnStyle 260 "Patch All" 87 158 87 $true {
         # FIX: Use script-scoped variable
         if ($Script:GuiInstalledClients.Count -eq 0) {
             $statusLabel.Text = "No Discord clients detected to patch!"
             return
         }
-        $form.Tag = @{ Action = 'PatchAll'; Multiplier = $slider.Value; SkipBackup = -not $chk.Checked }
+        $form.Tag = @{ Action = 'PatchAll'; Multiplier = $slider.Value; SkipBackup = -not $chk.Checked; AutoRelaunch = $autoRelaunchChk.Checked }
         $form.DialogResult = "OK"
         $form.Close()
     }
     
-    $cancelBtn = & $btnStyle 385 "Cancel" "79,84,92" $false { $form.DialogResult = "Cancel"; $form.Close() }
+    $cancelBtn = & $btnStyle 385 "Cancel" 79 84 92 $false { $form.DialogResult = "Cancel"; $form.Close() }
 
     # FIX: Update status when selection changes - use script-scoped variable
     $clientCombo.Add_SelectedIndexChanged({
@@ -850,25 +871,24 @@ function Find-Compiler {
 
 #region Source Code
 function Get-AmplifierSourceCode {
-    # CRITICAL: When user selects 1x gain, multiplier MUST be -1
-    # Formula: gain = channels + Multiplier = 2 + Multiplier
-    # For 1x gain: 2 + Multiplier = 1, so Multiplier = -1
-    $internalMultiplier = $Script:Config.AudioGainMultiplier - 2
+    # GUI 1x = Multiplier -1, GUI 2x = Multiplier 0, GUI 4x = Multiplier 2, etc.
+    $multiplier = $Script:Config.AudioGainMultiplier - 2
     
-    # Verify the math
-    if ($Script:Config.AudioGainMultiplier -eq 1 -and $internalMultiplier -ne -1) {
-        Write-Log "ERROR: Multiplier calculation wrong! Expected -1, got $internalMultiplier" -Level Error
-        throw "Multiplier calculation error"
-    }
-    
-    Write-Log "Generating amplifier: Gain=$($Script:Config.AudioGainMultiplier)x, Multiplier=$internalMultiplier" -Level Info
-    Write-Host "    Amplifier: $($Script:Config.AudioGainMultiplier)x gain = Multiplier $internalMultiplier" -ForegroundColor Cyan
+    Write-Log "Generating amplifier: GUI=$($Script:Config.AudioGainMultiplier)x, Multiplier=$multiplier" -Level Info
     
     return @"
-// Gain: $($Script:Config.AudioGainMultiplier)x
-// Multiplier: $internalMultiplier
-// Formula: out = in * (2 + $internalMultiplier) = in * $($Script:Config.AudioGainMultiplier)
-#define Multiplier ($internalMultiplier)
+// modify this value
+#define Multiplier $multiplier
+//
+
+typedef signed char        int8_t;
+typedef short              int16_t;
+typedef int                int32_t;
+typedef long long          int64_t;
+typedef unsigned char      uint8_t;
+typedef unsigned short     uint16_t;
+typedef unsigned int       uint32_t;
+typedef unsigned long long uint64_t;
 
 extern "C" void __cdecl hp_cutoff(const float* in, int cutoff_Hz, float* out, int* hp_mem, int len, int channels, int Fs, int arch)
 {
@@ -1572,6 +1592,22 @@ function Start-Patching {
             Write-Log "Failed: $($result.Failed -join ', ')" -Level Warning
         }
         
+        # Auto-relaunch Discord if enabled (relaunch first client)
+        if ($Script:Config.AutoRelaunch -and $uniqueClients.Count -gt 0) {
+            Write-Log "Auto-relaunching Discord..." -Level Info
+            Start-Sleep -Seconds 1
+            
+            $firstClient = $uniqueClients[0]
+            $clientInfo = $Script:DiscordClients[$firstClient.Index]
+            if ($clientInfo -and $clientInfo.Path -and (Test-Path $clientInfo.Path)) {
+                $updateExe = Join-Path $clientInfo.Path "Update.exe"
+                if (Test-Path $updateExe) {
+                    Write-Log "Launching: $($clientInfo.Name.Trim())" -Level Info
+                    Start-Process $updateExe -ArgumentList "--processStart", $clientInfo.Exe
+                }
+            }
+        }
+        
         Save-UserConfig
         Read-Host "Press Enter to exit"
         return ($result.Success -eq $result.Total)
@@ -1587,7 +1623,8 @@ function Start-Patching {
     
     $Script:Config.AudioGainMultiplier = $guiResult.Multiplier
     $Script:Config.SkipBackup = $guiResult.SkipBackup
-    Write-Log "GUI Settings: Gain = $($Script:Config.AudioGainMultiplier)x, Skip Backup = $($Script:Config.SkipBackup)" -Level Info
+    $Script:Config.AutoRelaunch = $guiResult.AutoRelaunch
+    Write-Log "GUI Settings: Gain = $($Script:Config.AudioGainMultiplier)x, Skip Backup = $($Script:Config.SkipBackup), Auto Relaunch = $($Script:Config.AutoRelaunch)" -Level Info
     
     if ($guiResult.Action -eq 'PatchAll') {
         # Set flag and recurse
@@ -1643,6 +1680,33 @@ function Start-Patching {
     Write-Host ""
     if ($result.Success -gt 0) {
         Write-Log "=== PATCHING COMPLETE ===" -Level Success
+        
+        # Auto-relaunch Discord if enabled
+        if ($Script:Config.AutoRelaunch) {
+            Write-Log "Auto-relaunching Discord..." -Level Info
+            Start-Sleep -Seconds 1
+            
+            # Find the Discord executable
+            $discordPath = $selectedClientInfo.Path
+            if ($discordPath -and (Test-Path $discordPath)) {
+                $appFolder = Get-ChildItem $discordPath -Directory -Filter "app-*" -ErrorAction SilentlyContinue | 
+                    Sort-Object Name -Descending | Select-Object -First 1
+                if ($appFolder) {
+                    $exePath = Join-Path $appFolder.FullName $selectedClientInfo.Exe
+                    if (Test-Path $exePath) {
+                        Write-Log "Launching: $exePath" -Level Info
+                        Start-Process $exePath
+                    } else {
+                        # Try Update.exe --processStart
+                        $updateExe = Join-Path $discordPath "Update.exe"
+                        if (Test-Path $updateExe) {
+                            Write-Log "Launching via Update.exe..." -Level Info
+                            Start-Process $updateExe -ArgumentList "--processStart", $selectedClientInfo.Exe
+                        }
+                    }
+                }
+            }
+        }
     } else {
         Write-Log "=== PATCHING FAILED ===" -Level Error
     }
