@@ -5,7 +5,7 @@ echo Downloading Discord Voice Node Patcher...
 set "PS1=%TEMP%\discord_voice_node_patcher.ps1"
 
 powershell -ExecutionPolicy Bypass -Command ^
-"Invoke-RestMethod 'https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/main/discord_voice_node_patcher_v2.1.ps1' -OutFile '%PS1%'"
+"Invoke-RestMethod 'https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/main/discord_voice_node_patcher.ps1' -OutFile '%PS1%'"
 
 powershell -ExecutionPolicy Bypass -File "%PS1%"
 
