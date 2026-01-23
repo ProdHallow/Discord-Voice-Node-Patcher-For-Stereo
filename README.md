@@ -21,7 +21,7 @@ Just download and double-click. Always runs the latest version.
 ### Option 2: One-Liner (No Download)
 
 ```powershell
-irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1 | iex
+irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/main/discord_voice_node_patcher_v2.1.ps1 | iex
 ```
 
 Paste into PowerShell and press Enter.
@@ -121,7 +121,7 @@ notepad "$env:TEMP\DiscordVoicePatcher\patcher.log"
 
 ### Restore Original
 ```powershell
-irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v3.ps1 | iex
+irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/main/discord_voice_node_patcher_v2.1.ps1 | iex
 # Then select "Restore" in the GUI
 ```
 
@@ -213,6 +213,6 @@ irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-
 
 <div align="center">
 
-**[Report Issue](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/issues)** · **[Releases](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases)** · **[Source Code](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/blob/main/discord_voice_node_patcher_v3.ps1)**
+**[Report Issue](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/issues)** · **[Releases](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/releases)** · **[Source Code](https://github.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/blob/main/discord_voice_node_patcher_v2.1.ps1)**
 
 </div>
