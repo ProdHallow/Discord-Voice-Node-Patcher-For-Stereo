@@ -65,7 +65,7 @@ $Script:Config = @{
     ModuleName = "discord_voice.node"
     TempDir = "$env:TEMP\DiscordVoicePatcher"; BackupDir = "$env:TEMP\DiscordVoicePatcher\Backups"
     LogFile = "$env:TEMP\DiscordVoicePatcher\patcher.log"; ConfigFile = "$env:TEMP\DiscordVoicePatcher\config.json"
-    MaxBackupCount = 10; ExpectedFileSize = @{ Min = 14000000; Max = 18000000 }
+    MaxBackupCount = 10
     VoiceBackupAPI = "https://api.github.com/repos/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/contents/discord_voice"
     Offsets = @{
         CreateAudioFrameStereo = 0x116C91; AudioEncoderOpusConfigSetChannels = 0x3A0B64
@@ -138,43 +138,16 @@ function Get-UserConfig {
     return $null
 }
 
-function Test-FileIntegrity {
-    param([string]$FilePath)
-    if (-not (Test-Path $FilePath)) { Write-Log "File not found: $FilePath" -Level Error; return $false }
-    $size = (Get-Item $FilePath).Length
-    Write-Log "File size: $([Math]::Round($size / 1MB, 2)) MB" -Level Info
-    if ($size -lt $Script:Config.ExpectedFileSize.Min -or $size -gt $Script:Config.ExpectedFileSize.Max) {
-        Write-Log "Warning: File size outside expected range (may be different Discord version)" -Level Warning
-    }
-    return $true
-}
-
 function EnsureDir($p) { if ($p -and -not (Test-Path $p)) { try { [void](New-Item $p -ItemType Directory -Force) } catch { } } }
-
-function Add-Status {
-    param($StatusBox, $Form, [string]$Message, [string]$ColorName = "White")
-    if ($null -eq $StatusBox) { return }
-    $color = try { [System.Drawing.Color]::FromName($ColorName) } catch { [System.Drawing.Color]::White }
-    $timestamp = Get-Date -Format "HH:mm:ss"
-    $StatusBox.SelectionStart = $StatusBox.TextLength
-    $StatusBox.SelectionLength = 0
-    $StatusBox.SelectionColor = $color
-    $StatusBox.AppendText("[$timestamp] $Message`r`n")
-    $StatusBox.ScrollToCaret()
-    if ($null -ne $Form) { $Form.Refresh(); [System.Windows.Forms.Application]::DoEvents() }
-}
 #endregion
 
 #region Auto-Update
 function Check-ForUpdate {
-    param($StatusBox = $null, $Form = $null)
     try {
-        if ($StatusBox) { Add-Status $StatusBox $Form "Checking for script updates..." "Blue" }
-        else { Write-Log "Checking for script updates..." -Level Info }
+        Write-Log "Checking for script updates..." -Level Info
         
         if ([string]::IsNullOrEmpty($PSCommandPath)) {
-            if ($StatusBox) { Add-Status $StatusBox $Form "[OK] Running latest version from web" "LimeGreen" }
-            else { Write-Log "Running latest version from web" -Level Success }
+            Write-Log "Running latest version from web" -Level Success
             return @{ UpdateAvailable = $false; Reason = "WebExecution" }
         }
         
@@ -182,8 +155,7 @@ function Check-ForUpdate {
         try {
             Invoke-WebRequest -Uri $Script:UPDATE_URL -OutFile $tempFile -UseBasicParsing -TimeoutSec 15 | Out-Null
         } catch {
-            if ($StatusBox) { Add-Status $StatusBox $Form "[!] Could not check for updates: $($_.Exception.Message)" "Orange" }
-            else { Write-Log "Could not check for updates: $($_.Exception.Message)" -Level Warning }
+            Write-Log "Could not check for updates: $($_.Exception.Message)" -Level Warning
             return @{ UpdateAvailable = $false; Reason = "NetworkError"; Error = $_.Exception.Message }
         }
         
@@ -197,18 +169,15 @@ function Check-ForUpdate {
         if ($remoteContent -ne $localContent) {
             $remoteVersion = "Unknown"
             if ($remoteContent -match 'SCRIPT_VERSION\s*=\s*"([^"]+)"') { $remoteVersion = $matches[1] }
-            if ($StatusBox) { Add-Status $StatusBox $Form "[!] Update available! (v$Script:SCRIPT_VERSION -> v$remoteVersion)" "Yellow" }
-            else { Write-Log "Update available! (v$Script:SCRIPT_VERSION -> v$remoteVersion)" -Level Warning }
+            Write-Log "Update available! (v$Script:SCRIPT_VERSION -> v$remoteVersion)" -Level Warning
             return @{ UpdateAvailable = $true; TempFile = $tempFile; RemoteVersion = $remoteVersion; LocalVersion = $Script:SCRIPT_VERSION }
         } else {
             Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
-            if ($StatusBox) { Add-Status $StatusBox $Form "[OK] You are on the latest version (v$Script:SCRIPT_VERSION)" "LimeGreen" }
-            else { Write-Log "You are on the latest version (v$Script:SCRIPT_VERSION)" -Level Success }
+            Write-Log "You are on the latest version (v$Script:SCRIPT_VERSION)" -Level Success
             return @{ UpdateAvailable = $false; Reason = "UpToDate" }
         }
     } catch {
-        if ($StatusBox) { Add-Status $StatusBox $Form "[!] Update check failed: $($_.Exception.Message)" "Orange" }
-        else { Write-Log "Update check failed: $($_.Exception.Message)" -Level Warning }
+        Write-Log "Update check failed: $($_.Exception.Message)" -Level Warning
         return @{ UpdateAvailable = $false; Reason = "Error"; Error = $_.Exception.Message }
     }
 }
@@ -804,7 +773,11 @@ private:
         PatchBytes(Offsets::SetsBitrateBitwiseOr, "\x90\x90\x90", 3);
         printf("  [3/4] Enabling 48kHz sample rate...\n");
         PatchBytes(Offsets::Emulate48Khz, "\x90\x90\x90", 3);
-        printf("  [4/4] Injecting custom audio processing (%dx gain)...\n", AUDIO_GAIN);
+        if (AUDIO_GAIN == 1) {
+            printf("  [4/4] Injecting audio processing (no amplification)...\n");
+        } else {
+            printf("  [4/4] Injecting audio processing (%dx gain)...\n", AUDIO_GAIN);
+        }
         PatchBytes(Offsets::HighPassFilter, "\x48\xB8\x10\x9E\xD8\xCF\x08\x02\x00\x00\xC3", 11);
         PatchBytes(Offsets::HighpassCutoffFilter, (const char*)hp_cutoff, 0x100);
         PatchBytes(Offsets::DcReject, (const char*)dc_reject, 0x1B6);
@@ -823,7 +796,11 @@ public:
         printf("  Discord Voice Quality Patcher v3.0\n");
         printf("================================================\n");
         printf("  Target:  %s\n", modulePath.c_str());
-        printf("  Config:  %dkHz, %dkbps, Stereo, %dx gain\n", SAMPLE_RATE/1000, BITRATE, AUDIO_GAIN);
+        if (AUDIO_GAIN == 1) {
+            printf("  Config:  %dkHz, %dkbps, Stereo, no gain\n", SAMPLE_RATE/1000, BITRATE);
+        } else {
+            printf("  Config:  %dkHz, %dkbps, Stereo, %dx gain\n", SAMPLE_RATE/1000, BITRATE, AUDIO_GAIN);
+        }
         printf("================================================\n\n");
         if (!WaitForDiscordClose(5)) {
             printf("Closing Discord processes...\n");
@@ -861,7 +838,11 @@ public:
         printf("  SUCCESS! Patching Complete!\n");
         printf("================================================\n");
         printf("  You can now restart Discord\n");
-        printf("  Audio will be %dx amplified\n", AUDIO_GAIN);
+        if (AUDIO_GAIN == 1) {
+            printf("  Audio at original volume (no amplification)\n");
+        } else {
+            printf("  Audio will be %dx amplified\n", AUDIO_GAIN);
+        }
         printf("================================================\n\n");
         return true;
     }
