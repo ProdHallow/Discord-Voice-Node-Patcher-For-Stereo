@@ -21,7 +21,7 @@ Just download and double-click. Always runs the latest version.
 ### Option 2: One-Liner (No Download)
 
 ```powershell
-irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v3.ps1 | iex
+irm https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1 | iex
 ```
 
 Paste into PowerShell and press Enter.
