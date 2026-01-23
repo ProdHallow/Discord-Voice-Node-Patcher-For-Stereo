@@ -33,7 +33,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing -ErrorAction SilentlyContinue
 
-$Script:UPDATE_URL = "https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/refs/heads/main/discord_voice_node_patcher_v2.1.ps1"
+$Script:UPDATE_URL = "https://raw.githubusercontent.com/ProdHallow/Discord-Voice-Node-Patcher-For-Stereo/main/discord_voice_node_patcher.ps1"
 $Script:SCRIPT_VERSION = "3.0"
 
 #region Auto-Elevation
